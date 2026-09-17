@@ -225,7 +225,26 @@ def load_tiles(path):
 
 
 def norm_title(s):
+    """Punctuation- and case-insensitive title identity. Does NOT strip anything else."""
     return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def norm_title_unannotated(s):
+    """Same, minus a TRAILING PARENTHETICAL -- for the guarded fallback below only.
+
+    Migrated tiles here routinely carry an annotation saying why they are what they are:
+    `Heartbeat / Up (SQL: builder count_distinct under-counts)`. Matching on the raw string
+    drops such a tile from the audit as "no source panel identified", which reads as an
+    untitled source panel rather than a rename.
+
+    But the parenthetical is NOT always an annotation -- sometimes it is the panel's
+    identity. `Network traffic (bytes)` and `Network traffic (packets)` are two different
+    stock panels, and stripping both sides paired the bytes tile to the packets panel. So
+    this is used ONLY after an exact match fails, ONLY on the tile's side, and ONLY when it
+    resolves to exactly one source panel. Ambiguity means no match, which is the honest
+    answer.
+    """
+    return norm_title(re.sub(r"\s*\([^()]*\)\s*$", "", (s or "").strip()))
 
 
 def main(argv):
@@ -319,6 +338,13 @@ def main(argv):
                 if ptitle and norm_title(ptitle) == norm_title(name):
                     match = (ptitle, att)
                     break
+            if match is None:
+                # Guarded fallback: the tile carries an annotation the panel does not. Only
+                # accepted when it is UNAMBIGUOUS -- see norm_title_unannotated.
+                cands = [(ptitle, att) for _dt, ptitle, att in all_panels
+                         if ptitle and norm_title(ptitle) == norm_title_unannotated(name)]
+                if len(cands) == 1:
+                    match = cands[0]
             if match is None:
                 scored = []
                 for _dt, ptitle, att in all_panels:
