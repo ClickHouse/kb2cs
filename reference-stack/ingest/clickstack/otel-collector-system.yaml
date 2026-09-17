@@ -1,0 +1,186 @@
+# OpenTelemetry Collector config that ships the SYSTEM syslog and auth log into ClickStack.
+#
+# A sibling of otel-collector-{nginx,apache,postgres,mysql}.yaml, and a separate collector run
+# for the same reason: ClickStack keys its Sources on `service.name`, set per pipeline.
+#
+# What is different about this one:
+#
+# 1. TWO TIMESTAMP BEHAVIOURS ON THE SOURCE SIDE, and they are opposite. Measured against
+#    `_simulate`, not assumed:
+#       logs-system.syslog  re-derives @timestamp from the message text
+#       logs-system.auth    KEEPS the document's @timestamp when there is one
+#    That asymmetry is the Elasticsearch loader's problem, not this file's -- but it is why
+#    `shift_syslog_line` rewrites the line AND returns an ISO. Noted here because anyone
+#    comparing the two stacks will meet it.
+#
+# 2. SYSLOG CARRIES NO YEAR. `Aug 17 00:00:01` has no year at all, so every reader has to
+#    supply one, and stanza's timestamp parser defaults to the CURRENT year. That is correct
+#    here only because this corpus is generated in the same year it is read. A real syslog
+#    archive backfilled across a New Year boundary is misdated by every tool that does this,
+#    Elastic Agent included. If you regenerate with a different DAY year, set the year
+#    explicitly rather than trusting the default.
+#    The day is also space-padded for single digits in real syslog (`Aug  7`). This corpus
+#    spans one day, always `17`, so `%d` is safe; a month-long corpus needs `%e` or a
+#    normalising operator before this parser.
+#
+# 3. THE SSH SOURCE IP IS EMITTED AS `remote_addr` ON PURPOSE. The `geo_*` columns on
+#    otel_logs are MATERIALIZED from `LogAttributes['remote_addr']`, so reusing that key
+#    gives the SSH panels country/city with no second dictionary -- the same trick the apache
+#    config uses for its access log.
+#
+# 4. THE `invalid user` USERNAME IS PARSED CLEANLY, DIVERGING FROM ELASTIC DELIBERATELY.
+#    Elastic's grok for `Failed password for invalid user admin` captures user.name as
+#    `" admin"` -- with a leading space -- so Kibana's failed-user panels split one attacker
+#    username into two buckets (`admin` 880 and `" admin"` 759 in this corpus). This config
+#    captures `admin` in both cases. Reproducing the bug would mean reproducing the bug; the
+#    divergence is asserted in verify-system.sh and recorded in INTEGRATIONS.md under
+#    "Where the source platform is wrong", exactly as the apache Firefox-version case is.
+
+extensions:
+  file_storage/checkpoints:
+    directory: /storage
+
+receivers:
+  filelog/system_syslog:
+    include: [/data/system/syslog.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      - type: regex_parser
+        regex: '^(?P<ts>\w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<proc>[\w\-\.]+)(?:\[(?P<pid>\d+)\])?: (?P<msg>(?s).*)$'
+        timestamp:
+          parse_from: attributes.ts
+          layout_type: strptime
+          layout: '%b %d %H:%M:%S'
+      # syslog has no severity field of its own; the integration does not set log.level on
+      # these rows either, so nothing is mapped and SeverityText stays empty. Faithful.
+
+  filelog/system_auth:
+    include: [/data/system/auth.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      - type: regex_parser
+        regex: '^(?P<ts>\w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<proc>[\w\-\.]+)(?:\[(?P<pid>\d+)\])?: (?P<msg>(?s).*)$'
+        timestamp:
+          parse_from: attributes.ts
+          layout_type: strptime
+          layout: '%b %d %H:%M:%S'
+
+      # Each of the five below is guarded by `if`, because a line is exactly one of them and
+      # an unguarded parser fails the whole record on every other shape.
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: '^Accepted (?P<ssh_method>\S+) for (?P<user>\S+) from (?P<remote_addr>\S+) port (?P<source_port>\d+)'
+        if: 'attributes.msg matches "^Accepted "'
+      - type: add
+        field: attributes.ssh_event
+        value: Accepted
+        if: 'attributes.msg matches "^Accepted "'
+
+      # `invalid user` is optional here and the username is captured WITHOUT the leading
+      # space Elastic leaves behind -- see note 4 in the header.
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: '^Failed (?P<ssh_method>\S+) for (?:invalid user )?(?P<user>\S+) from (?P<remote_addr>\S+) port (?P<source_port>\d+)'
+        if: 'attributes.msg matches "^Failed "'
+      - type: add
+        field: attributes.ssh_event
+        value: Failed
+        if: 'attributes.msg matches "^Failed "'
+
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: '^Invalid user (?P<user>\S+) from (?P<remote_addr>\S+) port (?P<source_port>\d+)'
+        if: 'attributes.msg matches "^Invalid user "'
+      - type: add
+        field: attributes.ssh_event
+        value: Invalid
+        if: 'attributes.msg matches "^Invalid user "'
+
+      # sudo. The error clause is optional: on success sudo logs straight to TTY=.
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: '^\s*(?P<user>\S+) : (?:(?P<sudo_error>[^;]+?) ; )?TTY=(?P<sudo_tty>\S+) ; PWD=(?P<sudo_pwd>\S+) ; USER=(?P<sudo_target_user>\S+) ; COMMAND=(?P<sudo_command>.*)$'
+        if: 'attributes.proc == "sudo"'
+
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: '^new user: name=(?P<user>[^,]+), UID=(?P<user_id>\d+), GID=(?P<group_id>\d+), home=(?P<useradd_home>[^,]+), shell=(?P<useradd_shell>\S+)'
+        if: 'attributes.proc == "useradd"'
+
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: '^new group: name=(?P<group_name>[^,]+), GID=(?P<group_id>\d+)'
+        if: 'attributes.proc == "groupadd"'
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: system
+        action: upsert
+      - key: deployment.environment
+        value: training
+        action: upsert
+
+  transform/shift_time:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.time_unix_nano, log.time_unix_nano + ${env:SHIFT_NS:-0}) where ${env:SHIFT_NS:-0} != 0
+          - set(log.time_unix_nano, log.time_unix_nano + (UnixNano(Now()) - UnixNano(Time("2026-08-17T23:59:59Z", "%Y-%m-%dT%H:%M:%SZ")))) where ${env:SHIFT_NS:-0} == 0
+
+  transform/tag_stream:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.attributes["log.stream"], "system_syslog") where log.attributes["log.file.path"] == "/data/system/syslog.log"
+          - set(log.attributes["log.stream"], "system_auth") where log.attributes["log.file.path"] == "/data/system/auth.log"
+          # `host.hostname` is what the syslog dashboard groups by, and it is parsed out of
+          # the line rather than taken from the collector's own host -- these are shipped
+          # logs from five machines, not the logs of whatever box runs the collector.
+          - set(log.attributes["host.hostname"], log.attributes["hostname"]) where log.attributes["hostname"] != nil
+          - set(log.attributes["process.name"], log.attributes["proc"]) where log.attributes["proc"] != nil
+
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  otlphttp/clickstack:
+    endpoint: http://localhost:4318
+    headers:
+      authorization: ${env:CLICKSTACK_API_KEY}
+    compression: gzip
+    timeout: 120s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+      num_consumers: 1
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 0
+
+service:
+  extensions: [file_storage/checkpoints]
+  pipelines:
+    logs:
+      receivers: [filelog/system_syslog, filelog/system_auth]
+      processors: [memory_limiter, resource, transform/shift_time, transform/tag_stream, batch]
+      exporters: [otlphttp/clickstack]
+  telemetry:
+    logs:
+      level: info

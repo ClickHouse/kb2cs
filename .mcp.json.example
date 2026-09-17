@@ -1,0 +1,34 @@
+{
+  "$comment": [
+    "MCP servers for the dashboard migration: read Elastic, write ClickStack.",
+    "Regenerate after recreating the ClickStack stack:",
+    "  ./reference-stack/stack/clickstack/write-mcp-config.sh",
+    "Then restart Claude Code and approve both servers.",
+    "",
+    "The Elasticsearch MCP server has NO tools for Kibana saved objects, so dashboard",
+    "definitions come from the Kibana REST API instead. See MIGRATION.md.",
+    "",
+    "Both stacks must be running before Claude Code starts, or the servers fail to connect."
+  ],
+  "mcpServers": {
+    "elasticsearch": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@elastic/mcp-server-elasticsearch@0.3.1"
+      ],
+      "env": {
+        "ES_URL": "http://localhost:9200",
+        "ES_USERNAME": "elastic",
+        "ES_PASSWORD": "changeme"
+      }
+    },
+    "clickstack": {
+      "type": "http",
+      "url": "http://localhost:8080/api/mcp",
+      "headers": {
+        "Authorization": "Bearer REPLACE_ME_RUN_write-mcp-config.sh"
+      }
+    }
+  }
+}

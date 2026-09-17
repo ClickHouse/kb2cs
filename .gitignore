@@ -1,0 +1,29 @@
+# The generated corpus. 704 MB, and `access.json.log` alone is 434 MB against GitHub's
+# 100 MB per-file limit -- so it is NOT committed. It does not need to be: the generators are
+# deterministic with a fixed seed, so
+#
+#     cd reference-stack && python3 generator/generate.py && python3 generator/validate.py
+#     shasum -a 256 -c checksums.txt
+#
+# reproduces all 24 files byte-for-byte and proves it. checksums.txt IS committed.
+reference-stack/data/
+
+# Live credentials. `.mcp.json` carries a HyperDX personal API key minted by the local
+# container; regenerate it with reference-stack/stack/clickstack/write-mcp-config.sh.
+# .mcp.json.example is the committed template.
+.mcp.json
+reference-stack/.mcp.json
+
+# Collector checkpoint state: per-file read offsets. Committing it makes a re-ingest silently
+# skip data.
+.otel-storage/
+reference-stack/.otel-storage/
+
+# Local editor / agent settings
+.claude/settings.local.json
+reference-stack/.claude/
+
+# Python + OS noise
+__pycache__/
+*.pyc
+.DS_Store

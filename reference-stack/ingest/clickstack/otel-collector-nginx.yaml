@@ -1,0 +1,258 @@
+# OpenTelemetry Collector config that ships this dataset into ClickStack.
+#
+# IMPORTANT -- run this as a SEPARATE collector, not by editing ClickStack's bundled one.
+# The collector inside the ClickStack image is opamp-managed: it runs with `receivers:[nop]`
+# until a HyperDX team exists, and it will overwrite hand-edited config. So: bring up
+# ClickStack, create the team in the UI, copy the team's ingestion API key, then point this
+# collector at ClickStack's OTLP endpoint.
+#
+#   mkdir -p .otel-storage
+#   docker run --rm --network host \
+#     -v "$PWD/data:/data:ro" \
+#     -v "$PWD/.otel-storage:/storage" \
+#     -v "$PWD/ingest/clickstack/otel-collector-nginx.yaml:/etc/otel/config.yaml:ro" \
+#     -e CLICKSTACK_API_KEY=<team ingestion api key> \
+#     otel/opentelemetry-collector-contrib:latest --config /etc/otel/config.yaml
+#
+# `start_at: beginning` means the whole 24h of history is replayed on first run. The
+# collector remembers its offset in the storage extension, so a restart resumes rather
+# than re-ingesting.
+
+extensions:
+  # Tracks how far into each file we have read, so a restart resumes instead of replaying
+  # all 24 hours. /storage MUST be a mounted, writable volume: the contrib image runs as
+  # uid 10001 with a read-only root, so the collector cannot create this directory itself
+  # anywhere under /var or /tmp -- it exits at startup with "mkdir: permission denied".
+  file_storage/checkpoints:
+    directory: /storage
+
+receivers:
+  # --- the structured log: everything you need, no grok ------------------------------
+  filelog/nginx_access_json:
+    include: [/data/access.json.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      - type: json_parser
+        parse_from: body
+        # $msec is epoch seconds with millisecond precision. Prefer it over time_iso8601,
+        # which nginx only emits at second resolution.
+        timestamp:
+          parse_from: attributes.msec
+          layout_type: epoch
+          layout: s.ms
+        severity:
+          parse_from: attributes.status
+          # without this, SeverityText ends up as the literal status code ("200") instead
+          # of the level name, which reads badly in the HyperDX severity column
+          overwrite_text: true
+          mapping:
+            error:
+              - min: 500
+                max: 599
+            warn:
+              - min: 400
+                max: 499
+            info:
+              - min: 100
+                max: 399
+
+  # --- the raw combined log: the "before" path, kept for side-by-side comparison -----
+  filelog/nginx_access_combined:
+    include: [/data/access.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      - type: regex_parser
+        regex: '^(?P<remote_addr>\S+) (?P<remote_user>\S+) (?P<auth>\S+) \[(?P<time_local>[^\]]+)\] "(?P<request_method>\S+) (?P<request_uri>[^"]*?) (?P<server_protocol>HTTP/[\d.]+)" (?P<status>\d{3}) (?P<body_bytes_sent>\d+) "(?P<http_referer>[^"]*)" "(?P<http_user_agent>[^"]*)"$'
+        timestamp:
+          parse_from: attributes.time_local
+          layout: '%d/%b/%Y:%H:%M:%S %z'
+        severity:
+          parse_from: attributes.status
+          # without this, SeverityText ends up as the literal status code ("200") instead
+          # of the level name, which reads badly in the HyperDX severity column
+          overwrite_text: true
+          mapping:
+            error:
+              - min: 500
+                max: 599
+            warn:
+              - min: 400
+                max: 499
+            info:
+              - min: 100
+                max: 399
+      # status arrives as a string from the regex; make it a number so range filters and
+      # aggregations behave the same as they do on the JSON path
+      - type: remove
+        field: attributes.auth
+
+  # --- the error log: different shape, correlates via the *<connection> number -------
+  filelog/nginx_error:
+    include: [/data/error.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      - type: regex_parser
+        regex: '^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) \[(?P<level>\w+)\] (?P<pid>\d+)#(?P<tid>\d+): (?:\*(?P<connection>\d+) )?(?P<msg>.*)$'
+        timestamp:
+          parse_from: attributes.ts
+          layout: '%Y/%m/%d %H:%M:%S'
+        severity:
+          parse_from: attributes.level
+          # overwrite so SeverityText is INFO/WARN/ERROR here too, matching the access
+          # streams. nginx's finer-grained level (crit vs alert vs error, notice vs info)
+          # is not lost -- it stays in attributes.level.
+          overwrite_text: true
+          mapping:
+            fatal: emerg
+            error: [error, crit, alert]
+            warn: warn
+            info: [info, notice]
+            debug: debug
+      # pull the client IP and request line out of the message body so error-log entries
+      # are filterable on the same dimensions as access-log entries
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: 'client: (?P<remote_addr>[^,]+)'
+        if: 'attributes.msg matches "client: "'
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: 'request: "(?P<request>[^"]*)"'
+        if: 'attributes.msg matches "request: \""'
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: 'upstream: "(?P<upstream>[^"]*)"'
+        if: 'attributes.msg matches "upstream: \""'
+
+processors:
+  # ClickStack keys its Sources on service.name; give the three streams one service and
+  # distinguish them with an attribute so you can still split them in HyperDX.
+  resource:
+    attributes:
+      - key: service.name
+        value: nginx
+        action: upsert
+      - key: deployment.environment
+        value: training
+        action: upsert
+
+  # Slide the whole 24h window forward so its last event lands at ~now.
+  #
+  # Why: otel_logs has a 30-day TTL and this data is dated 2026-08-17, so from mid-September
+  # ClickStack silently drops the parts. It also leaves HyperDX's default "Last 15 minutes"
+  # and "Last 24 hours" views empty.
+  #
+  # The reference below is the dataset's LAST event. Change it if you regenerate with a
+  # different DAY in generate.py. To keep the original dates, comment the statement out.
+  #
+  # Note Now() is evaluated per record, not once, so the window is very slightly stretched
+  # rather than rigidly translated. Measured on a full ingest of this dataset: 4-8 s of
+  # spread across 24 h (0.009%), and up to 3.4 s of skew between the two access streams,
+  # which are read concurrently. That is immaterial here -- the correlation exercise joins
+  # on $connection, not on timestamps. If you ever do need a rigid translation (or want to
+  # shift by whole days so the diurnal peak stays at the same wall-clock hour), use
+  # ./shift-ns.sh and swap in the commented statement below.
+  # Two mutually exclusive statements, selected by whether SHIFT_NS is set. Env substitution
+  # happens when the config is parsed, so `${env:SHIFT_NS:-0}` becomes a literal and each
+  # `where` collapses to a constant true/false -- one statement runs, the other never does.
+  #
+  #   unset            per-record Now(), the convenient default (see the caveat below)
+  #   SHIFT_NS=<ns>    rigid translation by exactly that offset, no cross-stream skew
+  #
+  # Set SHIFT_NS whenever this stack will be compared against Elastic, so both land on the
+  # same clock. See RUNBOOK.md, "Keeping the two stacks on the same clock":
+  #   export SHIFT_NS=$(./ingest/clickstack/shift-ns.sh --align-hour)
+  transform/shift_time:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.time_unix_nano, log.time_unix_nano + ${env:SHIFT_NS:-0}) where ${env:SHIFT_NS:-0} != 0
+          - set(log.time_unix_nano, log.time_unix_nano + (UnixNano(Now()) - UnixNano(Time("2026-08-17T23:59:59Z", "%Y-%m-%dT%H:%M:%SZ")))) where ${env:SHIFT_NS:-0} == 0
+
+  transform/tag_stream:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["log.stream"], "access_json") where attributes["log.file.path"] == "/data/access.json.log"
+          - set(attributes["log.stream"], "access_combined") where attributes["log.file.path"] == "/data/access.log"
+          - set(attributes["log.stream"], "error") where attributes["log.file.path"] == "/data/error.log"
+          # status is a string on the combined path and a number on the JSON path; unify it
+          - set(attributes["status"], Int(attributes["status"])) where attributes["status"] != nil
+          # a single numeric latency, so both paths answer the same p99 query.
+          # upstream_response_time is "-" when nginx served locally and "0.01, 0.02" when
+          # it retried a second upstream, hence the guard.
+          - set(attributes["request_time_ms"], Double(attributes["request_time"]) * 1000) where attributes["request_time"] != nil
+
+  # Batches are deliberately SMALL. This is a 1M-record backfill aimed at an all-in-one
+  # container that also runs ClickHouse, Mongo and HyperDX, and its collector has a
+  # memory_limiter that will start returning 503 "data refused due to high memory usage".
+  # Since OTLP delivery is at-least-once and otel_logs is a plain MergeTree with no dedup,
+  # every ambiguous failure duplicates a whole batch -- so the batch size is the blast
+  # radius. 10000 here produced exactly 40000 duplicate rows (4 batches) in testing.
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  otlphttp/clickstack:
+    endpoint: http://localhost:4318
+    # NOT "Bearer <key>" -- ClickStack wants the bare API key. Bearer returns 401
+    # "provided authorization does not match expected scheme", which reads like a bad token.
+    headers:
+      authorization: ${env:CLICKSTACK_API_KEY}
+    compression: gzip
+
+    # Wait for a slow server rather than giving up on it. A client-side timeout is the
+    # WORST failure mode here: the server may already have written the batch, so the retry
+    # writes it a second time. A 503 is safe to retry (the server refused it outright); an
+    # ambiguous timeout is not. The default 30s is not enough when the receiver is under
+    # memory pressure.
+    timeout: 120s
+
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+      # One in-flight request at a time. The default (10 consumers) piles concurrent
+      # batches onto a receiver that is already refusing data, which is what triggers the
+      # memory_limiter in the first place.
+      num_consumers: 1
+
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      # Never give up. With the default max_elapsed_time of 300s, a sustained 503 storm
+      # silently DROPS records once the window expires -- in testing that lost 51,264 of
+      # 499,964 requests while also duplicating 40,000. Retrying forever instead lets
+      # backpressure reach the filelog receiver, which simply reads more slowly.
+      max_elapsed_time: 0
+
+  # uncomment to eyeball what is being produced before sending it anywhere
+  # debug:
+  #   verbosity: detailed
+
+service:
+  extensions: [file_storage/checkpoints]
+  pipelines:
+    logs:
+      receivers:
+        - filelog/nginx_access_json
+        - filelog/nginx_access_combined
+        - filelog/nginx_error
+      processors: [memory_limiter, resource, transform/shift_time, transform/tag_stream, batch]
+      exporters: [otlphttp/clickstack]
+  telemetry:
+    logs:
+      level: info

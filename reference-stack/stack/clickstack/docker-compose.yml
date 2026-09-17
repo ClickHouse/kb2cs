@@ -1,0 +1,208 @@
+# ClickStack (HyperDX + ClickHouse + OTel collector) preloaded with this dataset.
+#
+#   cd stack/clickstack
+#   docker compose up -d              # clickstack + registers a team, captures the API key
+#   docker compose run --rm load      # ships all three log files through OTLP
+#   ./load-apache.sh ./load-postgres.sh ./load-mysql.sh   # the other three services
+#   ./verify.sh                       # checks counts, parsing and recency
+#
+#   HyperDX      http://localhost:8080   train@example.com / TrainingP4ss!
+#   ClickHouse   localhost:9000 / http://localhost:8123   (default, no password)
+#
+# Deliberately mirrors ../elastic/ so the two can be brought up side by side and compared.
+# Ports do not clash between the two stacks.
+
+name: nginx-training-clickstack
+
+services:
+  clickstack:
+    image: clickhouse/clickstack-all-in-one:latest
+    container_name: nginx-training-clickstack
+    ports:
+      - "8080:8080"     # HyperDX UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+      - "8123:8123"     # ClickHouse HTTP
+      - "9000:9000"     # ClickHouse native
+    volumes:
+      - chdata:/var/lib/clickhouse   # the logs themselves
+      - mongodata:/data/db           # HyperDX team, users, saved searches, dashboards
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ >/dev/null && curl -sf http://localhost:8000/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+
+  # Registers a HyperDX team and writes its ingestion API key to a shared volume.
+  #
+  # This is not optional bootstrapping: until a team exists, the bundled opamp-managed
+  # collector runs with `receivers: [nop]` and ports 4317/4318 are not even bound. Without
+  # this step the loader gets connection-refused, not an auth error.
+  #
+  # Shares the clickstack network namespace because the HyperDX API on :8000 is internal.
+  setup:
+    image: curlimages/curl:8.10.1
+    container_name: nginx-training-cs-setup
+    depends_on:
+      clickstack: { condition: service_healthy }
+    network_mode: "service:clickstack"
+    # writes the captured key into the `secrets` volume, which docker creates root-owned;
+    # the curl image otherwise runs as uid 100 and cannot write to it
+    user: "0:0"
+    environment:
+      HDX_EMAIL: train@example.com
+      HDX_PASSWORD: TrainingP4ss!
+    volumes:
+      - ./setup.sh:/setup.sh:ro
+      - secrets:/secrets
+    entrypoint: ["sh", "/setup.sh"]
+
+  # Ships the dataset. Not started by `up`; run it explicitly:
+  #   docker compose run --rm load
+  #
+  # Uses the repo's real collector config unmodified, plus a small overlay that swaps the
+  # API key from an env var to the file that `setup` wrote -- the key does not exist until
+  # runtime, and the collector image has no shell to export it with.
+  load:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: nginx-training-cs-load
+    profiles: ["manual"]
+    depends_on:
+      # Not just "clickstack is healthy" -- setup only exits 0 once it has registered the
+      # team AND confirmed OTLP is accepting data. Gating on its completion is what stops
+      # the shipper starting while 4317/4318 are still unbound.
+      setup: { condition: service_completed_successfully }
+    network_mode: "service:clickstack"
+    # the contrib image runs as uid 10001 and cannot write to a root-owned named volume;
+    # without this the filelog receivers die with "storage client: permission denied"
+    user: "0:0"
+    environment:
+      # Empty/absent means "shift each record to Now() as it is processed" -- convenient, but
+      # it drifts from the Elastic stack by however long elapsed between the two loads. Set it
+      # to pin a rigid offset shared with Elastic:
+      #   export SHIFT_NS=$(./ingest/clickstack/shift-ns.sh --align-hour)
+      SHIFT_NS: "${SHIFT_NS:-0}"
+    volumes:
+      - ../../data:/data:ro
+      - ../../ingest/clickstack/otel-collector-nginx.yaml:/etc/otel/config.yaml:ro
+      - ./auth-from-file.yaml:/etc/otel/auth.yaml:ro
+      - secrets:/secrets:ro
+      - checkpoints:/storage
+    command:
+      - --config=/etc/otel/config.yaml
+      - --config=/etc/otel/auth.yaml
+      # the bundled collector already owns :8888 in this network namespace
+      - --set=service.telemetry.metrics.level=none
+
+  # Ships the APACHE dataset as a second service. Run it explicitly, via ./load-apache.sh:
+  #   docker compose run --rm load-apache
+  #
+  # Identical to `load` except for the config it mounts and its own checkpoint volume. It is
+  # a separate service because service.name is set per-pipeline, so nginx and apache cannot
+  # share one collector -- see ingest/clickstack/otel-collector-apache.yaml.
+  load-apache:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: nginx-training-cs-load-apache
+    profiles: ["manual"]
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    network_mode: "service:clickstack"
+    user: "0:0"
+    environment:
+      # Note this is APACHE's shift, which is not nginx's:
+      #   export SHIFT_NS=$(SERVICE=apache ./ingest/clickstack/shift-ns.sh --align-hour)
+      SHIFT_NS: "${SHIFT_NS:-0}"
+    volumes:
+      - ../../data:/data:ro
+      - ../../ingest/clickstack/otel-collector-apache.yaml:/etc/otel/config.yaml:ro
+      - ./auth-from-file.yaml:/etc/otel/auth.yaml:ro
+      - secrets:/secrets:ro
+      # Its OWN checkpoint volume. Sharing one with `load` would work today (file_storage
+      # keys by receiver id, and the ids differ) but it makes `docker volume rm` during a
+      # reload of one service silently reset the other's offsets too.
+      - checkpoints_apache:/storage
+    command:
+      - --config=/etc/otel/config.yaml
+      - --config=/etc/otel/auth.yaml
+      - --set=service.telemetry.metrics.level=none
+
+  # Ships the POSTGRES query log as a third service. Run via ./load-postgres.sh.
+  load-postgres:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: nginx-training-cs-load-postgres
+    profiles: ["manual"]
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    network_mode: "service:clickstack"
+    user: "0:0"
+    environment:
+      # postgres's own shift:
+      #   export SHIFT_NS=$(SERVICE=postgres ../../ingest/clickstack/shift-ns.sh --align-hour)
+      SHIFT_NS: "${SHIFT_NS:-0}"
+    volumes:
+      - ../../data:/data:ro
+      - ../../ingest/clickstack/otel-collector-postgres.yaml:/etc/otel/config.yaml:ro
+      - ./auth-from-file.yaml:/etc/otel/auth.yaml:ro
+      - secrets:/secrets:ro
+      - checkpoints_postgres:/storage
+    command:
+      - --config=/etc/otel/config.yaml
+      - --config=/etc/otel/auth.yaml
+      - --set=service.telemetry.metrics.level=none
+
+  # Ships the MYSQL slow log and error log as a fourth service. Run via ./load-mysql.sh.
+  load-mysql:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: nginx-training-cs-load-mysql
+    profiles: ["manual"]
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    network_mode: "service:clickstack"
+    user: "0:0"
+    environment:
+      # mysql's own shift, anchored on the slow log's last `SET timestamp=`:
+      #   export SHIFT_NS=$(SERVICE=mysql ../../ingest/clickstack/shift-ns.sh --align-hour)
+      SHIFT_NS: "${SHIFT_NS:-0}"
+    volumes:
+      - ../../data:/data:ro
+      - ../../ingest/clickstack/otel-collector-mysql.yaml:/etc/otel/config.yaml:ro
+      - ./auth-from-file.yaml:/etc/otel/auth.yaml:ro
+      - secrets:/secrets:ro
+      - checkpoints_mysql:/storage
+    command:
+      - --config=/etc/otel/config.yaml
+      - --config=/etc/otel/auth.yaml
+      - --set=service.telemetry.metrics.level=none
+
+  # Ships the SYSTEM syslog and auth log as a fifth service. Run via ./load-system.sh.
+  load-system:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: nginx-training-cs-load-system
+    profiles: ["manual"]
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    network_mode: "service:clickstack"
+    user: "0:0"
+    environment:
+      #   export SHIFT_NS=$(SERVICE=system ../../ingest/clickstack/shift-ns.sh --align-hour)
+      SHIFT_NS: "${SHIFT_NS:-0}"
+    volumes:
+      - ../../data:/data:ro
+      - ../../ingest/clickstack/otel-collector-system.yaml:/etc/otel/config.yaml:ro
+      - ./auth-from-file.yaml:/etc/otel/auth.yaml:ro
+      - secrets:/secrets:ro
+      - checkpoints_system:/storage
+    command:
+      - --config=/etc/otel/config.yaml
+      - --config=/etc/otel/auth.yaml
+      - --set=service.telemetry.metrics.level=none
+
+volumes:
+  chdata:
+  mongodata:
+  secrets:
+  checkpoints:
+  checkpoints_apache:
+  checkpoints_postgres:
+  checkpoints_mysql:
+  checkpoints_system:

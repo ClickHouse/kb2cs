@@ -1,0 +1,117 @@
+# OpenTelemetry Collector config that ships the POSTGRES query log into ClickStack.
+#
+# A sibling of otel-collector-{nginx,apache}.yaml, and a separate collector run for the same
+# reason: ClickStack keys its Sources on `service.name`, which the `resource` processor sets
+# per pipeline, so each service needs its own.
+#
+# Postgres is loaded into a NON-EMPTY otel_logs on purpose -- it is a third service alongside
+# nginx and apache. `load-postgres.sh` guards on postgres rows rather than on the table being
+# empty.
+#
+# Attribute naming: unlike the apache config, there is nothing to normalise onto here. The
+# nginx/apache access logs share a vocabulary (remote_addr, http_user_agent) because they are
+# both HTTP servers; a database query log has no overlap with either, so these attributes are
+# postgres's own and the geo_*/ua_* materialized columns simply do not apply to them. Those
+# columns will read empty for postgres rows, which is correct rather than a gap.
+
+extensions:
+  file_storage/checkpoints:
+    directory: /storage
+
+receivers:
+  filelog/postgres_log:
+    include: [/data/postgres/postgresql.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      # log_line_prefix '%t [%p] %q%u@%d ' -- `%q` means the user@database part is ABSENT on
+      # background-process lines (checkpointer, autovacuum), so that group is optional. Making
+      # it mandatory silently drops every checkpoint line.
+      - type: regex_parser
+        regex: '^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) (?P<tz>\w{1,4}) \[(?P<pid>\d+)\] (?:(?P<user>[\w$]+)@(?P<database>[\w$]+) )?(?P<level>[A-Z]+):  (?P<msg>.*)$'
+        timestamp:
+          parse_from: attributes.ts
+          layout: '%Y-%m-%d %H:%M:%S.%L'
+        severity:
+          parse_from: attributes.level
+          overwrite_text: true
+          mapping:
+            fatal: [fatal, panic]
+            error: error
+            warn: warning
+            info: [log, info, notice]
+            debug: [debug, debug1, debug2, debug3, debug4, debug5, statement, detail]
+      # A logged statement carries its duration and the SQL. Both are optional: an ERROR or a
+      # checkpoint line has neither, and `if` keeps the operator from failing on those.
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: '^duration: (?P<duration_ms>[\d.]+) ms  statement: (?P<query>(?s).*)$'
+        if: 'attributes.msg matches "^duration: "'
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: postgresql
+        action: upsert
+      - key: deployment.environment
+        value: training
+        action: upsert
+
+  transform/shift_time:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.time_unix_nano, log.time_unix_nano + ${env:SHIFT_NS:-0}) where ${env:SHIFT_NS:-0} != 0
+          - set(log.time_unix_nano, log.time_unix_nano + (UnixNano(Now()) - UnixNano(Time("2026-08-17T23:59:59Z", "%Y-%m-%dT%H:%M:%SZ")))) where ${env:SHIFT_NS:-0} == 0
+
+  transform/tag_stream:
+    log_statements:
+      - context: log
+        statements:
+          - set(log.attributes["log.stream"], "postgres_log") where log.attributes["log.file.path"] == "/data/postgres/postgresql.log"
+          # Elastic's pipeline converts `duration: N ms` into event.duration in NANOSECONDS.
+          # Store both: the raw ms as logged (the source of truth, and what the log line
+          # says) and the ns figure the Kibana panels filter on, so a migrated tile can use
+          # whichever the source panel used.
+          - set(log.attributes["duration_ns"], Double(log.attributes["duration_ms"]) * 1000000.0) where log.attributes["duration_ms"] != nil
+
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  otlphttp/clickstack:
+    endpoint: http://localhost:4318
+    headers:
+      authorization: ${env:CLICKSTACK_API_KEY}
+    compression: gzip
+    timeout: 120s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+      num_consumers: 1
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 0
+
+service:
+  extensions: [file_storage/checkpoints]
+  pipelines:
+    logs:
+      receivers: [filelog/postgres_log]
+      processors: [memory_limiter, resource, transform/shift_time, transform/tag_stream, batch]
+      exporters: [otlphttp/clickstack]
+  telemetry:
+    logs:
+      level: info

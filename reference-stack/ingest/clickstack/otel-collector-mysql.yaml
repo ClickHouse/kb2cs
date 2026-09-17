@@ -1,0 +1,167 @@
+# OpenTelemetry Collector config that ships the MYSQL slow log and error log into ClickStack.
+#
+# A sibling of otel-collector-{nginx,apache,postgres}.yaml, and a separate collector run for
+# the same reason: ClickStack keys its Sources on `service.name`, which the `resource`
+# processor sets per pipeline, so each service needs its own.
+#
+# THE ONE THING THAT MAKES THIS CONFIG DIFFERENT: the slow log is not line-oriented.
+#
+# A single slow query is five lines:
+#
+#   # Time: 2026-08-17T00:00:00.266864Z
+#   # User@Host: cms_ro[cms_ro] @ app-01 [10.0.2.11]  Id: 17579
+#   # Query_time: 1.636744  Lock_time: 0.003343 Rows_sent: 59  Rows_examined: 10856
+#   SET timestamp=1786924800;
+#   SELECT t.slug, count(*) AS n FROM posts p JOIN terms t ON t.post_id = p.id GROUP BY ...;
+#
+# and Elastic's integration expects all five in one `message`. A default filelog receiver
+# emits five logs per query, four of which contain no query at all -- and it fails silently,
+# because each of those four lines IS a valid log line, just a useless one. So the receiver is
+# given `multiline.line_start_pattern` and recombines on the `# Time: ` header. The error log
+# below is ordinary one-line-per-record and deliberately does NOT set multiline, which is why
+# the two live in separate receivers rather than one `include:` list.
+#
+# One consequence of line_start_pattern: a record is not emitted until the NEXT record starts
+# or `force_flush_period` (500ms default) expires, so the final query in the file arrives
+# half a second after the rest. That is fine for a bounded file; it matters if you ever point
+# this at a live log and expect the newest query immediately.
+#
+# TIMESTAMP: taken from `SET timestamp=<epoch>`, NOT from the `# Time:` header, because that
+# is the field Elastic's pipeline uses -- measured, not assumed:
+# logs-mysql.slowlog-1.28.1 follows SET when the two disagree and ignores `# Time:` entirely.
+# It is whole seconds by format, so both stacks land on exactly the same instant (the same
+# property apache has, and the reason neither needs nginx's sub-second reconciliation).
+#
+# Attribute naming: like the postgres config and unlike the apache one, there is nothing to
+# normalise onto the nginx vocabulary. A database log shares no fields with an HTTP access
+# log, so the geo_*/ua_* materialized columns read empty for these rows -- correct, not a gap.
+
+extensions:
+  file_storage/checkpoints:
+    directory: /storage
+
+receivers:
+  # ---------------------------------------------------------------- slow log (multi-line)
+  filelog/mysql_slowlog:
+    include: [/data/mysql/slowlog.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    multiline:
+      # Every record begins with this header and nothing else in the file does.
+      line_start_pattern: '^# Time: '
+    operators:
+      # `(?s)` on the query group so `.` spans newlines: a real slow log can carry a
+      # multi-statement or pretty-printed query, and without it everything after the first
+      # newline of the SQL is dropped.
+      - type: regex_parser
+        regex: '^# Time: (?P<time_header>\S+)\s*\n# User@Host:\s*(?P<user>[^\[]+)\[[^\]]*\]\s*@\s*(?P<source_host>\S*)\s*\[(?P<source_ip>[^\]]*)\]\s*Id:\s*(?P<thread_id>\d+)\s*\n# Query_time:\s*(?P<query_time>[\d.]+)\s+Lock_time:\s*(?P<lock_time>[\d.]+)\s+Rows_sent:\s*(?P<rows_sent>\d+)\s+Rows_examined:\s*(?P<rows_examined>\d+)\s*\nSET timestamp=(?P<ts>\d+);\s*\n(?P<query>(?s).+?)\s*$'
+        timestamp:
+          parse_from: attributes.ts
+          layout_type: epoch
+          layout: s
+      # The slow log carries no severity -- every record is a successful query that was
+      # merely slow. Elastic's pipeline sets event.type "info" and no log.level at all, so
+      # nothing is mapped here and SeverityText stays empty. That is faithful, not missing.
+
+  # ---------------------------------------------------------------- error log (one per line)
+  filelog/mysql_error:
+    include: [/data/mysql/error.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      # 2026-08-17T00:00:01.500000Z 41 [System] [MY-010931] [Server] <message>
+      # thread id, level, error code and subsystem are each optional in a real error log
+      # (the very first lines a server writes have no thread id), so all three groups are.
+      - type: regex_parser
+        regex: '^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)Z\s*(?P<thread_id>\d+)?\s*(?:\[(?P<level>[^\]]+)\])?\s*(?:\[(?P<code>MY-\d+)\])?\s*(?:\[(?P<provider>[^\]]+)\])?\s*(?P<msg>(?s).*)$'
+        timestamp:
+          parse_from: attributes.ts
+          # %f is microseconds; mysqld writes 6 fractional digits. Elastic's date processor
+          # keeps only milliseconds, so ClickStack is the more precise of the two here by
+          # up to 999us -- irrelevant for bucketing, but do not expect a byte-equal instant.
+          layout: '%Y-%m-%dT%H:%M:%S.%f'
+        severity:
+          parse_from: attributes.level
+          overwrite_text: true
+          # mysqld's own vocabulary. `System` is not an error: it is the level used for
+          # startup/shutdown notices, so it maps to info alongside Note.
+          mapping:
+            error: [error, ERROR]
+            warn: [warning, Warning]
+            info: [note, Note, system, System]
+          # NOTE the raw text survives in LogAttributes['level'] regardless of
+          # overwrite_text, which is what a migrated tile groups on: Kibana's `log.level`
+          # holds 'Note'/'Warning'/'ERROR'/'System', not the standard names. Verified against
+          # the postgres rows already loaded, where SeverityText='info' and level='LOG'.
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: mysql
+        action: upsert
+      - key: deployment.environment
+        value: training
+        action: upsert
+
+  transform/shift_time:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.time_unix_nano, log.time_unix_nano + ${env:SHIFT_NS:-0}) where ${env:SHIFT_NS:-0} != 0
+          - set(log.time_unix_nano, log.time_unix_nano + (UnixNano(Now()) - UnixNano(Time("2026-08-17T23:59:59Z", "%Y-%m-%dT%H:%M:%SZ")))) where ${env:SHIFT_NS:-0} == 0
+
+  transform/tag_stream:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.attributes["log.stream"], "mysql_slowlog") where log.attributes["log.file.path"] == "/data/mysql/slowlog.log"
+          - set(log.attributes["log.stream"], "mysql_error") where log.attributes["log.file.path"] == "/data/mysql/error.log"
+          # Elastic's pipeline turns `Query_time` (seconds) into event.duration in
+          # NANOSECONDS and `Lock_time` into mysql.slowlog.lock_time.sec (left in seconds).
+          # Store both forms of the duration for the same reason the postgres config does:
+          # the raw value is what the log line says, the ns value is what the Kibana panels
+          # filter on, and a migrated tile should be able to use whichever its source used.
+          - set(log.attributes["duration_ns"], Double(log.attributes["query_time"]) * 1000000000.0) where log.attributes["query_time"] != nil
+
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  otlphttp/clickstack:
+    endpoint: http://localhost:4318
+    headers:
+      authorization: ${env:CLICKSTACK_API_KEY}
+    compression: gzip
+    timeout: 120s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+      num_consumers: 1
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 0
+
+service:
+  extensions: [file_storage/checkpoints]
+  pipelines:
+    logs:
+      receivers: [filelog/mysql_slowlog, filelog/mysql_error]
+      processors: [memory_limiter, resource, transform/shift_time, transform/tag_stream, batch]
+      exporters: [otlphttp/clickstack]
+  telemetry:
+    logs:
+      level: info
