@@ -208,7 +208,7 @@ What makes this worth a hard rule rather than care: **no verification path can r
 - `clickstack_query_tiles` reported `status: ok` and `hasData: true`.
 - A full-distribution diff against the source passed 13/13.
 
-So the only defence is structural: **assert the key is absent.** `verify-migration.py` has a
+So the only defence is structural: **assert the key is absent.** the reference repo's object-query helper has a
 `serieslimit:<dashboard>` verb for exactly this, and the system verifier asserts every
 dashboard reports nothing.
 

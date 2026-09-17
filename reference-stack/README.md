@@ -60,9 +60,12 @@ stack/clickstack/docker-compose.yml        ClickStack + HyperDX, same shape (see
 stack/clickstack/geoip.sh                  DB-IP + ip_trie dictionary -> geo columns on otel_logs
 stack/clickstack/ua.sh                     uap-core + regexp_tree dictionary -> ua_* columns
 stack/clickstack/write-mcp-config.sh       regenerates .mcp.json with the live HyperDX key
-stack/clickstack/verify-migration.sh       18 checks on the migrated nginx dashboards
-stack/clickstack/verify-{apache,metrics,apache-metrics,postgres,mysql,system}.sh
-                                           the other six migrations (see INTEGRATIONS.md)
+stack/clickstack/verify-nginx.sh           42 checks on the migrated nginx dashboards
+stack/clickstack/verify-{apache,postgres,mysql,system}.sh
+                                           the other four integrations, one file each
+                                           (see INTEGRATIONS.md)
+stack/clickstack/hdx-objects.py            queries the HyperDX saved-object payload; the
+                                           verifiers' `q`/`inspect` helper
 ../verify/verify-tiles-vs-elastic.py       diffs 200 tile series against ES bucket-for-bucket
                                            (mysql, nginx, apache, postgres; takes names)
 ../verify/tilediff.py                      that harness's machinery

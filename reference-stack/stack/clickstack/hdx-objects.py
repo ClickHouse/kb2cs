@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""JSON inspection helper for verify-migration.sh.
+"""Query the HyperDX saved-object payload. Used by every verify-<integration>.sh.
 
 Reads the combined /dashboards + /saved-search payload on stdin (separated by the
-<<<DASHBOARDS>>> / <<<SEARCHES>>> markers verify-migration.sh writes) and answers one
+<<<DASHBOARDS>>> / <<<SEARCHES>>> markers each verifier writes) and answers one
 query per invocation:
 
     tilecount:<dashboard name>          -> number of tiles, or nothing if absent
@@ -21,7 +21,7 @@ hand-written equivalent. That distinction is not academic: a Drops Rate tile her
 hand-written check for weeks-equivalent while the stored query was subtly different and drew
 the wrong series.
 
-Shared by verify-migration.sh (nginx) and verify-apache.sh, which is why nothing here
+Shared by every verify-<integration>.sh, which is why nothing here
 mentions either integration by name.
 
 Kept separate from the shell script because extracting a multiIf containing commas,

@@ -297,7 +297,7 @@ promising a dashboard, not just its schema.**
    the Expected column. This is what makes the recipe testable rather than aspirational: a
    tile that renders is not a tile that is correct.
 6. **Record** any panel that could not be reproduced, and why.
-7. **Re-verify the artifacts** with `./stack/clickstack/verify-migration.sh` — 16 checks that
+7. **Re-verify the artifacts** with `./stack/clickstack/verify-nginx.sh` — 16 checks that
    the four objects exist, that every tile carries its stream predicate, and that the
    expressions *stored inside the tiles* still reproduce Elastic's numbers. To rebuild both
    stacks from zero and run all of this end to end, follow [`RUNBOOK.md`](RUNBOOK.md).
@@ -325,7 +325,7 @@ they end up apart by however long elapsed between the two loads. On the referenc
 HyperDX — the same traffic, 40 minutes offset, nothing missing.
 
 Aligned to each dataset's own start, the two agree bucket for bucket to within a handful of
-rows. `verify-migration.sh` reports the skew as an advisory check; `RUNBOOK.md` explains how to
+rows. `verify-nginx.sh` reports the skew as an advisory check; `RUNBOOK.md` explains how to
 load both from a common shift.
 
 **Expect a small residual even when perfectly aligned, and do not try to fix it.** Elastic

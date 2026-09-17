@@ -12,10 +12,6 @@
 # Every expectation was measured against the Elastic stack on 2026-09-16 over the absolute
 # window 2026-09-15T15:00Z .. 2026-09-16T14:00Z. Counts that depend on the window say so.
 set -uo pipefail
-# Run from this script's own directory. `docker compose exec` resolves the compose file
-# from the working directory, so without this the script only works when invoked from
-# here -- and reports "ClickHouse not reachable", which reads as a broken stack.
-cd "$(dirname "$0")"
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 EMAIL="${HDX_EMAIL:-train@example.com}"
@@ -180,7 +176,7 @@ API=$(docker compose exec -T clickstack sh -c "
 " </dev/null 2>/dev/null)
 [ -n "$API" ] || { echo "  could not log in to the HyperDX API as $EMAIL"; exit 1; }
 printf '%s' "$API" > /tmp/hdx-mysql-objects.txt
-q() { python3 verify-migration.py "$1" < /tmp/hdx-mysql-objects.txt; }
+q() { python3 hdx-objects.py "$1" < /tmp/hdx-mysql-objects.txt; }
 
 for spec in "$D_LOGS:7" "$D_DB:17" "$D_REPLICA:5"; do
   name="${spec%:*}"; want="${spec##*:}"

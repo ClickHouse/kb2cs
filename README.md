@@ -273,10 +273,10 @@ dashboards, 126 data tiles.**
 
 | integration | dashboards | tiles | renders | verifier | value-diff vs Elastic | status |
 |---|---:|---:|---:|---|---:|---|
-| **nginx** (logs) | 2 | 10 | 10/10 | `verify-migration.sh` 18/18 | 12 series | complete |
-| **nginx** (metrics) | 1 | 8 | 8/8 | `verify-metrics.sh` 24/24 | 11 series | complete |
-| **apache** (logs) | 1 | 7 | 7/7 | `verify-apache.sh` 20/20 | 11 series | complete |
-| **apache** (metrics) | 1 | 10 | 10/10 | `verify-apache-metrics.sh` 25/25 | 43 series | complete ¹ |
+| **nginx** (logs) | 2 | 10 | 10/10 | `verify-nginx.sh` 42/42 | 12 series | complete |
+| **nginx** (metrics) | 1 | 8 | 8/8 | `verify-nginx.sh` 42/42 | 11 series | complete |
+| **apache** (logs) | 1 | 7 | 7/7 | `verify-apache.sh` 45/45 | 11 series | complete |
+| **apache** (metrics) | 1 | 10 | 10/10 | `verify-apache.sh` 45/45 | 43 series | complete ¹ |
 | **postgresql** (logs) | 2 | 6 | 6/6 | `verify-postgres.sh` 21/21 | 7 series | complete |
 | **postgresql** (metrics) | 1 | 9 | 9/9 | `verify-postgres.sh` 21/21 | 31 series | complete |
 | **mysql** (logs) | 1 | 6 | 6/6 | `verify-mysql.sh` 36/36 | — ² | complete |

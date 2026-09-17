@@ -13,10 +13,10 @@ integration is complete. Every number below was measured against the running sta
 
 | integration | version | dashboards | panels | fields | status |
 |---|---|---:|---:|---:|---|
-| **nginx** (logs) | 3.2.2 | 2 | 10 | 12 | **migrated** 2026-08-20 — 12 tiles + 2 saved searches, `verify-migration.sh` 18/18, **12 series bucket-for-bucket** |
-| **apache** (logs) | 3.0.2 | 1 | 7 | 12 | **migrated** 2026-09-16 — 8 tiles, `verify-apache.sh` 20/20, **11 series bucket-for-bucket** |
-| **nginx** (metrics) | 3.2.2 | 1 | 8 | 10 | **migrated** 2026-09-16 — 9 tiles (7 `sql`), `verify-metrics.sh` 24/24, **11 series bucket-for-bucket** |
-| **apache** (metrics) | 3.0.2 | 1 | 11 | 33 | **migrated** 2026-09-16 — 12 tiles (10 `sql`, 1 panel unmigratable), `verify-apache-metrics.sh` 25/25, **43 series bucket-for-bucket** |
+| **nginx** (logs) | 3.2.2 | 2 | 10 | 12 | **migrated** 2026-08-20 — 12 tiles + 2 saved searches, `verify-nginx.sh` 42/42, **12 series bucket-for-bucket** |
+| **apache** (logs) | 3.0.2 | 1 | 7 | 12 | **migrated** 2026-09-16 — 8 tiles, `verify-apache.sh` 45/45, **11 series bucket-for-bucket** |
+| **nginx** (metrics) | 3.2.2 | 1 | 8 | 10 | **migrated** 2026-09-16 — 9 tiles (7 `sql`), `verify-nginx.sh` 42/42, **11 series bucket-for-bucket** |
+| **apache** (metrics) | 3.0.2 | 1 | 11 | 33 | **migrated** 2026-09-16 — 12 tiles (10 `sql`, 1 panel unmigratable), `verify-apache.sh` 45/45, **43 series bucket-for-bucket** |
 | **postgresql** (logs) | 1.31.0 | 2 | 6 | 7 | **migrated** 2026-09-16 — 8 tiles, **all builder**, nothing degraded; covered by the same `verify-postgres.sh` 21/21, **7 series bucket-for-bucket** |
 | **postgresql** (metrics) | 1.31.0 | 1 | 9 | 19 | **migrated** 2026-09-16 — 10 tiles (9 `sql`, one template ×8), `verify-postgres.sh` 21/21, **31 series bucket-for-bucket** |
 | **mysql** (logs) | 1.28.1 | 1 | 6 | 6 | **migrated** 2026-09-16 — 7 tiles (1 `sql`), **multi-line** slow log; covered by the same `verify-mysql.sh` 36/36 (no series; search/terms tiles) |
@@ -63,7 +63,7 @@ by one each: a `markdown` provenance note was added to each dashboard.
 
 Performed **2026-08-20**; the recipe and the field mapping are in
 [`MIGRATION.md`](MIGRATION.md). Re-verified 2026-09-15 with
-`./stack/clickstack/verify-migration.sh` — **18/18 checks pass**, including that the
+`./stack/clickstack/verify-nginx.sh` — **42/42 checks pass**, including that the
 expressions *stored inside the tiles* still reproduce Elastic's numbers (499,964 · 11,476 ·
 12,659 · 10,557,094,271 · 2,534), all 5 OS buckets and all 20 browser buckets.
 
@@ -77,7 +77,7 @@ verification script — now FIXED.** The Kibana `Operating systems breakdown` an
 grouped on `ua_os` / `ua_browser` alone, so the version ring was silently dropped on
 2026-08-20 and went unnoticed for four weeks.
 
-`verify-migration.sh` could not catch it: it verified the tiles that exist against Elastic and
+`verify-nginx.sh` could not catch it: it verified the tiles that exist against Elastic and
 never asked whether a tile reproduces its source panel's *shape*. Its "all 5 OS buckets and
 all 20 browser buckets match exactly" claim was true and measured the wrong thing — the family
 level, which was all the tile had.
@@ -97,7 +97,7 @@ Elastic's own nested `terms` exactly, with two known exceptions already in the r
 ClickStack's extra `Other` OS bucket (uap-core returns the literal string where Elastic omits
 the field) and `Firefox 141.0` against Elastic's `Firefox 141.0.` — see
 [Where the source platform is wrong](#where-the-source-platform-is-wrong).
-`verify-migration.sh` was re-baselined and is still **18/18**.
+`verify-nginx.sh` was re-baselined and is still **18/18**.
 
 ### apache — logs
 
@@ -109,7 +109,7 @@ Tagged `apache` + `migrated-from-kibana`. Eight tiles from seven panels: the ext
 provenance markdown. Unlike nginx there are **no standalone saved searches** — apache's
 errors-log panel is stored by value inside the dashboard, not as a referenced `search` object.
 
-Performed **2026-09-16**, verified with `./stack/clickstack/verify-apache.sh` — **20/20**.
+Performed **2026-09-16**, verified with `./stack/clickstack/verify-apache.sh` — **45/45**.
 
 This migration needed **data first**, which is what had kept apache at "parsed only": a
 dashboard cannot be verified against a source that has no rows. `generator/generate-apache.py`
@@ -141,7 +141,7 @@ Two pieces of groundwork it forced, both reusable:
 | `[Metrics Nginx] Overview` | 8 | `[Metrics Nginx] Overview (migrated)` | 9 |
 
 Tagged `nginx` + `metrics` + `migrated-from-kibana`. Performed **2026-09-16**, verified with
-`./stack/clickstack/verify-metrics.sh` — **24/24**.
+`./stack/clickstack/verify-nginx.sh` — **42/42**.
 
 > **Corrected 2026-09-16, after the mysql migration.** Five tiles across these two dashboards
 > — nginx `Active connections` and `Reading / Writing / Waiting Rates`, apache
@@ -163,8 +163,8 @@ Tagged `nginx` + `metrics` + `migrated-from-kibana`. Performed **2026-09-16**, v
 > two sign-offs: the errors are small (3.63 against 3.67), so the charts looked right and the
 > **visual pass could not see them**; and both verifiers asserted whole-window averages, which
 > match to four decimal places. Only a per-bucket diff finds this. Both suites now also assert
-> that these tiles stay SQL — `verify-metrics.sh` is 24 checks and
-> `verify-apache-metrics.sh` 25.
+> that these tiles stay SQL — `verify-nginx.sh` is 24 checks and
+> `verify-apache.sh` 25.
  The first *metrics* migration here, and
 the first use of `sql` tiles: **five of the eight panels** needed one, which is itself the
 headline — the logs dashboards migrated almost entirely into builder tiles.
@@ -220,7 +220,7 @@ instrumentation actually has. The mapping table is in the loader's docstring.
 | `[Metrics Apache] Overview` | 11 | `[Metrics Apache] Overview (migrated)` | 12 |
 
 Tagged `apache` + `metrics` + `migrated-from-kibana`. Performed **2026-09-16**, verified with
-`./stack/clickstack/verify-apache-metrics.sh` — **25/25**. See the gauge-tile correction under
+`./stack/clickstack/verify-apache.sh` — **45/45**. See the gauge-tile correction under
 [nginx — metrics](#nginx--metrics); three of this dashboard's tiles were affected. 11 panels → 10 data tiles, a gap
 note for the one that could not be migrated, and a provenance note.
 
@@ -508,7 +508,7 @@ cardinality is ≤5), and two — *New users over time* and *New groups over tim
 12 series where Kibana's `size=5` shows five. Kibana's five are arbitrary there anyway: every
 user has exactly one event, so the top-5 is a tie broken at random.
 
-`verify-migration.py` gained a `serieslimit:<dashboard>` verb and `verify-system.sh` asserts
+`hdx-objects.py` gained a `serieslimit:<dashboard>` verb and `verify-system.sh` asserts
 every dashboard reports nothing, which is the only defence available.
 
 **A read-back trap found while building that guard:** a `pie`/`bar` tile's `limit` is persisted

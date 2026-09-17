@@ -97,13 +97,13 @@ def build():
     return e
 
 
-# Declared, not tolerated. Each is asserted in verify-migration.sh so nobody "fixes" it.
+# Declared, not tolerated. Each is asserted in verify-nginx.sh so nobody "fixes" it.
 DIVERGENCES = [
     "Nginx logs — requests by country: DB-IP vs MaxMind disagree by up to ~43% on CA. "
-    "Checked as a distribution in verify-migration.sh, not here.",
+    "Checked as a distribution in verify-nginx.sh, not here.",
     "Operating systems / Browsers breakdown: uap-core returns the literal 'Other' where "
     "Elastic omits user_agent.os.name entirely. Full 8- and 25-bucket diffs live in "
-    "verify-migration.sh.",
+    "verify-nginx.sh.",
     "Top pages: 503 requests whose request line contains a backslash have no url.original "
     "in Elastic at all (the integration's grok drops it), so the distributions differ by "
     "one key. Asserted in verify-apache.sh's sibling check.",

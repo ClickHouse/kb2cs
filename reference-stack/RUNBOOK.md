@@ -307,7 +307,7 @@ Expected output: **2 dashboards + 2 saved searches**, tagged `nginx` and
 ## 8. Prove it landed
 
 ```bash
-./stack/clickstack/verify-migration.sh
+./stack/clickstack/verify-nginx.sh
 ```
 
 **18 checks.** This is the answer to "did the migration go smoothly":
@@ -341,7 +341,7 @@ HyperDX  http://localhost:8080   train@example.com / TrainingP4ss!
 UTC, but each renders in its own configured zone: Kibana's `dateFormat:tz` defaults to
 `Browser`, and HyperDX has a separate *Settings → Use UTC time* switch. If they disagree, the
 diurnal curve appears shifted by your UTC offset and the migration looks broken when it is
-not. This affects labels only — every number in `verify-migration.sh` is queried with explicit
+not. This affects labels only — every number in `verify-nginx.sh` is queried with explicit
 UTC bounds and is unaffected.
 
 Also set the HyperDX time range to cover the data. The load shifts the dataset to end at
@@ -493,7 +493,7 @@ worth knowing if you ever compare timestamps across streams.
 
 ### Detecting it
 
-`verify-migration.sh` reports the skew as an advisory check whenever Elasticsearch is
+`verify-nginx.sh` reports the skew as an advisory check whenever Elasticsearch is
 reachable. Or directly:
 
 ```bash
@@ -515,7 +515,7 @@ Pick based on what you are doing:
 |---|---|---|
 | **A. Hour anchor + shared epoch** *(recommended — what steps 3 and 4 do)* | Export `SHIFT_ANCHOR_EPOCH` once. ES: `--align-hour` with that variable. ClickStack: `export SHIFT_NS=$(./ingest/clickstack/shift-ns.sh --align-hour)` with the same variable. | **Measured: 0 s apart.** Both datasets end on the same whole hour. Bucket edges line up with the time picker too. |
 | **B. Don't shift at all** | ES: `--no-shift`. ClickStack: `SHIFT_NS` unset *and* the `Now()` statement commented out in the collector config. | Both keep the original `2026-08-17` dates and match exactly. You must use an absolute time range in both UIs; no relative picker finds the data. |
-| **C. Leave it and compare relatively** | nothing | Fine for `verify-migration.sh`, which is entirely window-independent, and for any comparison of totals or distributions. Not fine for eyeballing two time charts. |
+| **C. Leave it and compare relatively** | nothing | Fine for `verify-nginx.sh`, which is entirely window-independent, and for any comparison of totals or distributions. Not fine for eyeballing two time charts. |
 
 ### How the anchor works
 
@@ -555,7 +555,7 @@ millisecond boundary rounding described above, not a shift.
 | 1 | `shasum -a 256 -c checksums.txt` | 3 × OK |
 | 3 | `stack/elastic/verify.sh` | 13 checks pass |
 | 4 | `stack/clickstack/verify.sh` | 15 checks pass |
-| 8 | `stack/clickstack/verify-migration.sh` | 18 checks pass, alignment `0s` |
+| 8 | `stack/clickstack/verify-nginx.sh` | 18 checks pass, alignment `0s` |
 
 Anything less and the failing check names what to fix.
 
@@ -665,7 +665,7 @@ loader posts OTLP/JSON straight to `:4318/v1/metrics`.
 cd ../clickstack
 export SHIFT_NS=$(../../ingest/clickstack/shift-ns.sh --align-hour)   # nginx's shift
 python3 load-metrics.py                       # 25,920 sum + 34,560 gauge points
-./verify-metrics.sh                           # 19 checks
+./verify-nginx.sh                           # 19 checks
 ```
 
 Unlike step 5b this does **not** need Elasticsearch stopped: 60k metric points is nothing
@@ -707,7 +707,7 @@ docker compose run --rm -e SHIFT_ANCHOR_EPOCH="$SHIFT_ANCHOR_EPOCH" load \
 cd ../clickstack
 export SHIFT_NS=$(SERVICE=apache ../../ingest/clickstack/shift-ns.sh --align-hour)
 python3 load-metrics.py --service apache     # 40,320 sum + 103,680 gauge points
-./verify-apache-metrics.sh                   # 21 checks
+./verify-apache.sh                   # 21 checks
 ```
 
 Note `SERVICE=apache` on `shift-ns.sh` and `--service apache` on both loaders: apache's series
