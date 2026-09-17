@@ -147,7 +147,7 @@ Prefer `clickstack_table` and `clickstack_timeseries` over `clickstack_sql`: the
 
 **On a metric source, check what `aggFn` actually operates on.** ClickStack de-cumulates a cumulative Sum *before* aggregating, so every `aggFn` acts on the per-series per-bucket **increase**, never on the counter value. A Kibana `max(some.counter)` panel therefore has **no builder equivalent** and needs a `sql` tile; and `differences(of max(V))` is not `increase` once there is more than one series. Full measurements in `references/clickstack-tiles.md`.
 
-**`seriesLimit` bypasses the select-item `where` — so do not set it at all on a shared table.** On `line`/`stacked_bar` it ranks the top N series over *unconditional* volume, so a tile can query fine and render an empty chart. This has fired **twice** here; the second time the top bucket was the empty string with 1.4M rows from four other services that lack the field. **No verification path catches it:** the builder tools have no `seriesLimit` parameter, so re-issuing the tile through them cannot reproduce it; `query_tiles` said `hasData: true`; a full-distribution diff passed. The only defence is asserting the key is absent (a structural assertion that the key is absent). Note also that a **pie/bar `limit` is persisted as `seriesLimit`**, so scope any such audit by `displayType`. Details in `references/clickstack-tiles.md`.
+**`seriesLimit` bypasses the select-item `where` — so do not set it at all on a shared table.** On `line`/`stacked_bar` it ranks the top N series over *unconditional* volume, so a tile can query fine and render an empty chart. This has fired **twice** here; the second time the top bucket was the empty string with 1.4M rows from four other services that lack the field. **No verification path catches it:** the builder tools have no `seriesLimit` parameter, so re-issuing the tile through them cannot reproduce it; `query_tiles` said `hasData: true`; a full-distribution diff passed. The only defence is structural: assert the key is absent on every `line`/`stacked_bar` tile. Note also that a **pie/bar `limit` is persisted as `seriesLimit`**, so scope any such audit by `displayType`. Details in `references/clickstack-tiles.md`.
 
 **The trap that silently doubles every number:** builder tiles have **no tile-level `where`**. For `line`, `stacked_bar`, `table`, `pie`, `bar` and `number`, the filter goes on **each `select` item** (it compiles to `countIf(…)`). Only `search` and `event_patterns` tiles accept `config.where`. Full tile schema and the `where` → `aggCondition` persistence mismatch: `references/clickstack-tiles.md`.
 
@@ -174,6 +174,11 @@ Two rules that decide whether the numeric pass means anything:
   milliseconds. Read the bound off `_mapping` or compute it from the data. For the timestamp
   case assert the *shape* of the disagreement — no bucket moves by more than one second's
   worth of events, and the deltas conserve — rather than equality.
+- **Verify the verifier.** A suite reports what it executed, not what you intended, and
+  the difference is always green: a dropped helper makes every call a "command not
+  found" that prints nothing and counts nothing. Assert the check COUNT as well as the
+  failure count, mutation-test each check, and when you refactor the harness diff its
+  OUTPUT against the previous run rather than its exit code.
 - **A tile can truncate itself.** A chart query's own row cap is legitimate syntax, so no
   structural check sees it, and every bucket it does return is correct, so no value check
   sees it either. Run each time-series tile capped and uncapped and compare row counts.

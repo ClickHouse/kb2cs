@@ -483,6 +483,38 @@ conservation — and tolerate only re-bucketing.
 > **Write tolerances as ABSOLUTE.** `max(tol, tol × |expected|)` looks defensive and turns a
 > tolerance of 1 into a 100% relative tolerance: a check that passes anything.
 
+## Verify the verifier: a check that does not run looks exactly like one that passed
+
+A suite reports what it *executed*, not what you *intended*. Those differ silently, and the
+failure is always in the same direction — green.
+
+The concrete shapes this takes, each seen on the reference migration:
+
+- **A missing helper.** Refactoring two check scripts into one dropped a helper function that
+  one half defined in its preamble. Every call to it became "command not found": no output,
+  no counter increment, exit status ignored. Eighteen checks vanished while their section
+  headers still printed and the summary still said *"24 checks passed"* in green. What caught
+  it was diffing the merged run's output lines against the two original runs'; nothing in the
+  run itself was anomalous.
+- **A silent query error.** A helper that returns a sentinel on failure rather than raising
+  turns "this query is broken" into "this tile has no data", which reads as a finding about
+  the data instead of a bug in the harness.
+- **A tautological expectation.** An expectation derived from the artifact under test agrees
+  with it whatever it says. This is the single most expensive failure mode here: a tile
+  reading the wrong field passed a green check for a day because the check had computed its
+  expectation from the field *the tile* named.
+
+Three habits that cost minutes and are the only reliable defences:
+
+1. **Assert the check COUNT, not just the failure count.** A suite that knows it should run N
+   checks catches its own silence; one that only counts failures cannot.
+2. **Mutation-test every check.** Re-introduce the bug the check exists for and confirm it
+   goes red, with an unmodified control that must stay silent. A check that cannot be made to
+   fail is not a check, and this is cheap enough to do for all of them.
+3. **When you refactor the harness, diff its OUTPUT against the previous run**, not its exit
+   code. Same for a rename: a per-artifact variable may mean something different in each half
+   you merged.
+
 ## A tile can truncate itself
 
 A chart query carries its own row cap. That cap is legitimate syntax, so no structural audit
