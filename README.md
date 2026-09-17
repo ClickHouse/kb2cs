@@ -87,7 +87,10 @@ structural audit, the row-cap check — Claude does unattended.
 | `CLICKSTACK_CONTAINER`, `CLICKSTACK_COMPOSE_DIR` | `verify/` | *instead of* `CLICKHOUSE_URL`, when ClickHouse is a local container — the bundled all-in-one image needs a password on 8123 that its own client does not |
 
 Pass credentials through the environment, never as arguments: an argument is visible in `ps`
-and lands in shell history.
+and lands in shell history. **[`.env.example`](.env.example)** lists every variable with notes;
+copy it to `.env` (gitignored) and `set -a; . ./.env; set +a`. Nothing reads `.env` itself —
+the scripts read the environment, which is deliberate: a config file the tools read on their
+own is a config file that eventually gets committed.
 
 ### Which versions this works against
 

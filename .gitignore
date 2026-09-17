@@ -27,3 +27,48 @@ reference-stack/.claude/
 __pycache__/
 *.pyc
 .DS_Store
+
+# ---------------------------------------------------------------------------------------
+# Credentials supplied by whoever is running a migration. The README asks for a dozen
+# environment variables (KIBANA_API_KEY, ES_PASSWORD, CLICKHOUSE_PASSWORD, ...) and the
+# natural thing to do with a dozen exports is to put them in a file. This repo is public, so
+# that file must never be committable. `.env.example` stays allowed as a template.
+.env
+.env.*
+!.env.example
+*.env
+secrets/
+
+# Working artifacts of the documented procedure. `export-dashboards.sh > dashboards.ndjson`,
+# then `audit-tiles.py dashboards.ndjson migrated.json --field-map fields.json` -- all three
+# are someone's OWN dashboard definitions, which is both noise and potentially their internal
+# service names, index patterns and queries.
+#
+# ROOT-ANCHORED on purpose: a bare `*.ndjson` would also ignore skill/scripts/tests/
+# fixture.ndjson, and a bare `*.json` would ignore the three tracked Elasticsearch ingest
+# templates. Anchoring keeps the rule to the directory people actually work in.
+/*.ndjson
+/dashboards.ndjson
+/d.ndjson
+/migrated.json
+/fields.json
+
+# A corpus generated from the repository root rather than from reference-stack/. generate.py
+# resolves --out against its own path so this should not happen, but it is one flag away.
+/data/
+
+# Python tooling
+.venv/
+venv/
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors
+.idea/
+.vscode/
+
+# Leftovers from a conflicted merge or a patch applied by hand
+*.orig
+*.rej

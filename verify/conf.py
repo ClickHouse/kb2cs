@@ -38,10 +38,11 @@ ES_PASSWORD = os.environ.get("ES_PASSWORD", "changeme")
 ES_AUTH = "Basic " + base64.b64encode(
     ("%s:%s" % (ES_USER, ES_PASSWORD)).encode()).decode()
 
-# Index patterns the harness reads. A customer's data streams are named differently, so the
-# expect_* modules take these as a prefix rather than hardcoding `logs-`/`metrics-`.
-ES_LOGS_PREFIX = os.environ.get("ES_LOGS_PREFIX", "logs-")
-ES_METRICS_PREFIX = os.environ.get("ES_METRICS_PREFIX", "metrics-")
+# NOTE there is deliberately no ES_LOGS_PREFIX / ES_METRICS_PREFIX here. An earlier version
+# defined both and nothing ever read them: the expect_* modules name full index patterns
+# (`metrics-nginx.stubstatus-default`), not prefix + suffix, because a customer writes their
+# own expectations against their own index names anyway. Config that is settable and has no
+# effect is worse than no config -- someone sets it and nothing happens.
 
 # ---------------------------------------------------------------- ClickHouse (the target)
 CH_URL = os.environ.get("CLICKHOUSE_URL", "").rstrip("/")
