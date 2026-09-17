@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Regenerate ../../.mcp.json with this instance's live HyperDX personal API key.
+# Regenerate the repository's .mcp.json with this instance's live HyperDX personal API key.
 #
-#   ./stack/clickstack/write-mcp-config.sh   then restart Claude Code and approve both servers
+#   ./reference-stack/stack/clickstack/write-mcp-config.sh
+#   ...then restart Claude Code: MCP servers attach at session start, so approving one cannot
+#   help a session already running.
 #
 # The key is baked in rather than read from an env var because Claude Code only sees the
 # environment of the process that launched it -- exporting the variable in a different
@@ -10,7 +12,10 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEY="$("$HERE/personal-key.sh")"
-OUT="$HERE/../../.mcp.json"
+# The REPOSITORY root, not the reference stack's: Claude Code reads .mcp.json from the
+# directory it was launched in. Resolved via git so it survives the layout moving again.
+ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || echo "$HERE/../../..")"
+OUT="$ROOT/.mcp.json"
 
 python3 - "$KEY" "$OUT" <<'PY'
 import json, sys
@@ -19,11 +24,11 @@ json.dump({
   "$comment": [
     "MCP servers for the dashboard migration: read Elastic, write ClickStack.",
     "Regenerate after recreating the ClickStack stack:",
-    "  ./stack/clickstack/write-mcp-config.sh",
+    "  ./reference-stack/stack/clickstack/write-mcp-config.sh",
     "Then restart Claude Code and approve both servers.",
     "",
     "The Elasticsearch MCP server has NO tools for Kibana saved objects, so dashboard",
-    "definitions come from the Kibana REST API instead. See MIGRATION.md.",
+    "definitions come from the Kibana REST API instead. See reference-stack/MIGRATION.md.",
     "",
     "Both stacks must be running before Claude Code starts, or the servers fail to connect."
   ],
