@@ -16,7 +16,13 @@ name: nginx-training-clickstack
 
 services:
   clickstack:
-    image: clickhouse/clickstack-all-in-one:latest
+    # PINNED. Everything this repo claims about the tile schema and the 200 verified
+    # tile series was measured against 2.35.0. ClickStack is a beta line whose tile
+    # schema moves between releases, so `latest` would silently invalidate the
+    # numbers in INTEGRATIONS.md for anyone cloning later. To move version
+    # deliberately: bump this, then re-run skill/scripts/introspect-clickstack.py
+    # and the verifiers.
+    image: clickhouse/clickstack-all-in-one:2.35.0
     container_name: nginx-training-clickstack
     ports:
       - "8080:8080"     # HyperDX UI
@@ -64,7 +70,7 @@ services:
   # API key from an env var to the file that `setup` wrote -- the key does not exist until
   # runtime, and the collector image has no shell to export it with.
   load:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.142.0
     container_name: nginx-training-cs-load
     profiles: ["manual"]
     depends_on:
@@ -101,7 +107,7 @@ services:
   # a separate service because service.name is set per-pipeline, so nginx and apache cannot
   # share one collector -- see ingest/clickstack/otel-collector-apache.yaml.
   load-apache:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.142.0
     container_name: nginx-training-cs-load-apache
     profiles: ["manual"]
     depends_on:
@@ -128,7 +134,7 @@ services:
 
   # Ships the POSTGRES query log as a third service. Run via ./load-postgres.sh.
   load-postgres:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.142.0
     container_name: nginx-training-cs-load-postgres
     profiles: ["manual"]
     depends_on:
@@ -152,7 +158,7 @@ services:
 
   # Ships the MYSQL slow log and error log as a fourth service. Run via ./load-mysql.sh.
   load-mysql:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.142.0
     container_name: nginx-training-cs-load-mysql
     profiles: ["manual"]
     depends_on:
@@ -176,7 +182,7 @@ services:
 
   # Ships the SYSTEM syslog and auth log as a fifth service. Run via ./load-system.sh.
   load-system:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.142.0
     container_name: nginx-training-cs-load-system
     profiles: ["manual"]
     depends_on:

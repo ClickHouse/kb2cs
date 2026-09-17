@@ -89,6 +89,38 @@ structural audit, the row-cap check — Claude does unattended.
 Pass credentials through the environment, never as arguments: an argument is visible in `ps`
 and lands in shell history.
 
+### Which versions this works against
+
+| | version | status |
+|---|---|---|
+| **Elasticsearch** | **8.15.0** | tested — the reference stack pins it |
+| **Kibana** | **8.15.0** | tested, including API-key auth and Spaces |
+| **ClickStack / HyperDX** | **2.35.0** | tested; pinned in the reference stack. The image's health endpoint reports `2.35.0`; `skill/references/` calls the same release `2.35.0-beta` |
+| Elasticsearch / Kibana 8.x generally | | **expected to work**, not exercised. The export path is the Saved Objects API, whose shapes are stable across 8.x |
+| Kibana 7.x | | **partly handled, untested.** The panel parser already reads 7.x Lens layers (`datasourceStates.indexpattern` as well as 8.x `formBased`) and 7.x `input_control_vis` control panels, but no 7.x export has been run end to end |
+| Kibana / Elasticsearch 9.x | | **unverified** |
+| Elastic Cloud, Elastic Serverless | | auth and Spaces are handled; **not exercised end to end** |
+
+Three version-specific things that will bite, all of them checkable in a minute:
+
+- **Do not aggregate through `@elastic/mcp-server-elasticsearch` (≤ 0.3.1) against 8.x.** It
+  sends `compatible-with=9` accept headers and 8.x rejects them with
+  `media_type_header_exception`. Keep that MCP server for `get_mappings` if you like; use
+  `curl` or `verify/` for aggregations. Nothing in this repo depends on it.
+- **On Serverless, basic auth is gone** — an API key is the only option, and it is also the
+  only one that survives SAML/OIDC SSO. `KIBANA_API_KEY` wants the `encoded` field from
+  `POST /_security/api_key`, not `id` or `api_key`.
+- **Query the default Space alone and a deployment looks empty.** Most non-trivial
+  deployments use Spaces; pass `--all-spaces` to take an honest inventory.
+
+> **The target version is the likelier problem, not the source.** ClickStack is beta and its
+> tile schema moves between releases, which is exactly why
+> `skill/scripts/introspect-clickstack.py` reads the schema off your *running* server instead
+> of trusting notes from another version. Run it first; everything in
+> `skill/references/clickstack-tiles.md` was measured that way against **2.35.0**, which the
+> reference stack now pins for that reason — `latest` would quietly invalidate every number
+> in `INTEGRATIONS.md` for anyone cloning later.
+
 ---
 
 ## Doing it by hand, or checking Claude's work
@@ -279,8 +311,9 @@ translation.**
 
 ## The reference migration (optional, but it is how all of the above was found)
 
-[`reference-stack/`](reference-stack/) is a self-contained pair of stacks — Elasticsearch 8.15
-+ Kibana with real Elastic integration packages installed, and ClickStack 2.35 — over a
+[`reference-stack/`](reference-stack/) is a self-contained pair of stacks — Elasticsearch
+8.15.0 + Kibana with real Elastic integration packages installed, and ClickStack 2.35.0, all
+three pinned — over a
 **deterministic synthetic corpus**: nginx, apache, postgresql, mysql and system logs and
 metrics, ~1.5 M events with stated invariants.
 
