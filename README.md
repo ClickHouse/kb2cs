@@ -20,31 +20,84 @@ render, or one whose source field does not exist on the target.
 
 ## Using this on your own migration
 
-Everything is environment-driven. Nothing below assumes the reference stack in this repo.
+`skill/` is a **Claude Code skill**, not a checklist. You do not walk the seven steps by
+hand — you install it, export the credentials, and ask. Claude runs the scripts, calls the
+ClickStack MCP tools to create the dashboards, and verifies its own output.
 
-### 1. Point the tooling at your deployments
+### Set it up once
 
 ```bash
-# source: Kibana + Elasticsearch
-export KIBANA_URL=https://my-deployment.kb.europe-west1.gcp.cloud.es.io
-export KIBANA_API_KEY=...            # the `encoded` field from POST /_security/api_key
-export ES_URL=https://my-deployment.es.europe-west1.gcp.cloud.es.io:9243
-export ES_USER=... ES_PASSWORD=...
+# 1. install the skill
+git clone https://github.com/ClickHouse/kb2cs && cd kb2cs
+cp -r skill ~/.claude/skills/kibana-to-clickstack     # or keep it project-local
 
-# target: ClickStack / HyperDX + its ClickHouse
-export CLICKSTACK_MCP_URL=https://hdx.example.com/api/mcp
-export CLICKSTACK_API_KEY=...
-export CLICKHOUSE_URL=https://abc.clickhouse.cloud:8443
-export CLICKHOUSE_USER=default CLICKHOUSE_PASSWORD=...
-export CLICKHOUSE_DATABASE=default
+# 2. credentials and endpoints (see the full list below)
+export KIBANA_URL=... KIBANA_API_KEY=...
+export ES_URL=... ES_USER=... ES_PASSWORD=...
+export CLICKSTACK_MCP_URL=... CLICKSTACK_API_KEY=...
+export CLICKHOUSE_URL=... CLICKHOUSE_PASSWORD=...
+
+# 3. give Claude Code the ClickStack MCP server, which is what CREATES the dashboards
+cp .mcp.json.example .mcp.json     # then put your URL and key in it
 ```
 
-Basic auth works too (`--user` / `--pass`), but an **API key is required on Elastic
-Serverless** and is the only option wherever SSO has displaced basic auth. Pass credentials
-via the environment, not arguments — an argument is visible in `ps` and lands in shell
-history.
+Then **restart Claude Code** — MCP servers attach at session start, so approving one cannot
+help a session already running. Check it reads `Connected`, not `Pending approval`:
 
-### 2. Export and inventory the source panels
+```bash
+claude mcp list
+```
+
+### Then ask
+
+> *Migrate my Kibana dashboards to ClickStack. Start with an inventory and show me what
+> won't survive before you build anything.*
+
+Claude will export the saved objects, inventory every panel, introspect your ClickStack
+source to see which attribute keys and materialized columns actually exist, tell you which
+panels cannot be migrated and why, translate the rest, create the dashboards, and then run
+the structural audit over what it built.
+
+### What it will stop and ask you about
+
+Two things are deliberately **not** automated, because automating them would make them
+worthless:
+
+- **The losses.** A map panel has no target chart type; a categorical heatmap has no target
+  at all. Which degraded form is acceptable — a country bar, a table, nothing — is a product
+  decision, so the skill surfaces the list and waits rather than picking for you.
+- **The value verification (steps 6b/6c).** Diffing tiles against Elasticsearch needs the
+  *Elasticsearch* side written by hand, one file per integration. That is the whole point: an
+  expectation derived from the tile agrees with the tile whatever it says. `verify/expect_*.py`
+  are five worked examples to copy — `expect_nginx.py` is the smallest and between them they
+  cover every tile shape (`wide`, `long`, `scalar`, `terms`, `builder`, `grouped`).
+
+Everything else — export, inventory, target introspection, translation, creation, the
+structural audit, the row-cap check — Claude does unattended.
+
+### The environment it reads
+
+| variable | used by | notes |
+|---|---|---|
+| `KIBANA_URL`, `KIBANA_API_KEY` | `skill/scripts/export-dashboards.sh` | API key is the `encoded` field from `POST /_security/api_key`. **Required on Elastic Serverless**, and the only option where SSO has displaced basic auth. `KIBANA_USER`/`KIBANA_PASS` work self-managed |
+| `KIBANA_SPACE` | same | or pass `--all-spaces`; most non-trivial deployments use spaces, and querying the default one alone reads as "this deployment has no dashboards" |
+| `ES_URL`, `ES_USER`, `ES_PASSWORD` | `verify/` | the source numbers for value verification |
+| `CLICKSTACK_MCP_URL`, `CLICKSTACK_API_KEY` | `skill/`, `verify/` | HyperDX. `CLICKSTACK_PERSONAL_API_KEY` is also accepted |
+| `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE` | `verify/` | the only route that works for ClickHouse Cloud or any remote cluster |
+| `CLICKSTACK_CONTAINER`, `CLICKSTACK_COMPOSE_DIR` | `verify/` | *instead of* `CLICKHOUSE_URL`, when ClickHouse is a local container — the bundled all-in-one image needs a password on 8123 that its own client does not |
+
+Pass credentials through the environment, never as arguments: an argument is visible in `ps`
+and lands in shell history.
+
+---
+
+## Doing it by hand, or checking Claude's work
+
+The same procedure, as commands. Worth reading even if you never run them — it is what the
+skill is doing, and the verify step is where migrations are usually declared finished too
+early.
+
+### 1. Export and inventory the source panels
 
 Panel definitions come from the **Kibana Saved Objects API**, never from an MCP server —
 there is no Kibana MCP tool, and the Elasticsearch one has no access to saved objects.
@@ -67,7 +120,7 @@ value* inside `attributes.panelsJSON` (a JSON **string**), and for Lens panels t
 want is `sourceField` inside `datasourceStates.formBased.layers.*.columns`. The script
 handles those plus legacy `visState` aggs, TSVB, maps and saved searches.
 
-### 3. Inventory the target before writing a single query
+### 2. Inventory the target before writing a single query
 
 ```bash
 python3 skill/scripts/introspect-clickstack.py --sources
@@ -77,19 +130,19 @@ With a `Map` schema this is the only way to learn which keys exist, and it surfa
 materialized columns (`geo_*`, `ua_*`) as real top-level columns — which decides whether a
 builder tile can reach them or you need SQL.
 
-### 4. Settle the losses with stakeholders *now*
+### 3. Settle the losses with stakeholders *now*
 
 See [What does not survive](#what-does-not-survive). Saying it at the start is a design
 decision; saying it when you reach the panel is an excuse.
 
-### 5. Translate, then create
+### 4. Translate, then create
 
 `skill/references/field-mapping.md` for ECS → `LogAttributes` patterns and the expressions
 for fields Elastic derived at index time; `skill/references/clickstack-tiles.md` for the tile
 schema and the trap that silently doubles every number (**builder tiles have no tile-level
 `where`** — the filter goes on each `select` item).
 
-### 6. Verify — a tile that renders is not a tile that is correct
+### 5. Verify — a tile that renders is not a tile that is correct
 
 This is the part this repo exists for. Four passes, in increasing cost:
 
@@ -116,15 +169,13 @@ the four and covers every tile shape between them (`wide`, `long`, `scalar`, `te
 For 6b, edit `SPEC` and `EXTRA` at the top of `verify/verify-controls.py`. Run either with
 `--list` / `--mutate` to see the shape and to confirm the checks can fail.
 
-### 7. Record the residue
+### 6. Record the residue
 
 Every migration has one. Write it down **with the reason, classified** — rendering-layer gap,
 enrichment absent, third-party dataset differs, source precision differs. Classifying it is
 what lets the next reader tell a limitation from a bug.
 
-Full procedure: **[`skill/SKILL.md`](skill/SKILL.md)**. It is written as a Claude Code skill;
-to install it, `cp -r skill ~/.claude/skills/kibana-to-clickstack`. It reads perfectly well as
-a document if you are migrating by hand.
+Full procedure, with every trap and its reason: **[`skill/SKILL.md`](skill/SKILL.md)**.
 
 ---
 
@@ -198,21 +249,23 @@ dashboards, 126 data tiles.**
 | **postgresql** (metrics) | 1 | 9 | 9/9 | `verify-postgres.sh` 21/21 | 31 series | complete |
 | **mysql** (logs) | 1 | 6 | 6/6 | `verify-mysql.sh` 36/36 | — ² | complete |
 | **mysql** (metrics) | 2 | 20 | 20/20 | `verify-mysql.sh` 36/36 | 42 series | complete |
-| **system** (logs, Linux) | 4 | 17 | 17/17 | `verify-system.sh` 44/44 | not ported ³ | complete ¹ |
-| **system** (metrics, Linux) | 2 | 33 | 33/33 | `verify-system.sh` 44/44 | not ported ³ | complete ¹ |
+| **system** (logs, Linux) | 4 | 17 | 17/17 | `verify-system.sh` 44/44 | 11 series | complete ¹ |
+| **system** (metrics, Linux) | 2 | 33 | 33/33 | `verify-system.sh` 44/44 | 32 series | complete ¹ |
 | system (Windows Security) | 5 | — | — | — | — | **read only** ⁴ |
 | kubernetes | 15 | — | — | — | — | **read only** ⁵ |
 | synthetics | 0 | — | — | — | — | ships no dashboards |
-| **total** | **17 / 37 read** | **126** | **126/126** | **228 checks, 0 failures** | **157 series** | |
+| **total** | **17 / 37 read** | **126** | **126/126** | **228 checks, 0 failures** | **200 series** | |
 
 ¹ Has a declared loss: a map panel (apache, system logs), two categorical heatmaps (system
 metrics), one uncollected metric (apache async connections). See
 [`reference-stack/INTEGRATIONS.md`](reference-stack/INTEGRATIONS.md).
 ² Six `search`/`terms` tiles — no time series to diff; covered by `verify-mysql.sh`.
-³ **The known gap.** The system dashboards were value-diffed during the migration (13
-distributions, 20 comparisons, all matching) but those harnesses were never ported into
-`verify/expect_*.py`, so the repo does not ship them. `verify-system.sh` covers totals and
-distributions; the per-bucket diff for system is the next piece of work.
+³ Ported 2026-09-17 from the harnesses the system migration was originally verified with,
+which had only ever existed outside the repo. Porting widened the coverage from 33
+comparisons to 43 series: the throwaway version checked only one side of each bidirectional
+counter and skipped one of the two degraded heatmaps. All five mutation tests fire, including
+the historical wrong-field bug (`process.cpu.pct` against the core-normalised field, which
+once passed a green check by deriving its expectation from the tile).
 ⁴ Needs a Windows event-log corpus (4624/4625/4720/4732…) this dataset has no analogue for.
 The translation looks cheap; it is purely a data problem.
 ⁵ 166 fields, and 43 panels use ad-hoc data views with Painless `runtimeFieldMap` —

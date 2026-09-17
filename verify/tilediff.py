@@ -273,6 +273,22 @@ def e_agg_window_sum(field, ds, extra=None):
             if b["v"]["value"] is not None}
 
 
+def e_scalar_newest(field, agg, ds, extra=None):
+    """agg(field) over ONLY the newest scrape in the window.
+
+    Several `number` tiles show a current value, not a window average, and express it as
+    `TimeUnix = (SELECT max(TimeUnix) ...)`. Averaging the whole window instead would give a
+    plausible-looking number that is wrong in every run -- and it would still be within any
+    loose tolerance, which is what makes this worth a dedicated helper.
+    """
+    newest = esflat(ds, {"mx": {"max": {"field": "@timestamp"}}},
+                    extra)["mx"]["value_as_string"]
+    if newest is None:
+        return None
+    at_newest = list(extra or []) + [{"term": {"@timestamp": newest}}]
+    return esflat(ds, {"v": {agg: {"field": field}}}, at_newest)["v"]["value"]
+
+
 def e_scalar(field, agg, ds, extra=None):
     """A single number over the whole window -- for a `number` tile."""
     return esflat(ds, {"v": {agg: {"field": field}}}, extra)["v"]["value"]
@@ -608,13 +624,20 @@ def run_terms_sql(cfg, tile, exp):
     names, rows = _sql_rows(cfg, tile)
     if names is None:
         return
-    kcol, vcol = exp["_key_col"], exp["_value_col"]
-    for c in (kcol, vcol):
+    # `_key_col` may name several columns: a table keyed on (command, user) is a different
+    # distribution from one keyed on either alone, and collapsing it to the first column
+    # silently sums over the second.
+    kcols = exp["_key_col"]
+    kcols = [kcols] if isinstance(kcols, str) else list(kcols)
+    vcol = exp["_value_col"]
+    for c in kcols + [vcol]:
         if c not in names:
             _fail(tile, c, "column %r missing from tile SQL" % c)
             return
-    ki, vi = names.index(kcol), names.index(vcol)
-    got = {str(r[ki]): float(r[vi]) for r in rows if r[vi] is not None}
+    kis, vi = [names.index(c) for c in kcols], names.index(vcol)
+    sep = exp.get("_key_sep", " | ")
+    got = {sep.join(str(r[i]) for i in kis): float(r[vi])
+           for r in rows if r[vi] is not None}
     want = exp["_data"]
     # A `terms` tile carries LIMIT N, so Elastic's tail beyond N is not a disagreement --
     # but every key the tile DOES show must match, and the tile must not invent one.
@@ -755,19 +778,27 @@ def run(dashboards, expect):
         print("\n== %s ==" % dname)
         dash = cs.call("clickstack_get_dashboard", {"id": did})
         seen = set()
+        # An expectation is normally keyed by the tile name. `_tile` overrides that, so one
+        # tile can carry TWO expectations under different keys -- needed where a table has
+        # two independent value columns (an interface's in and out bytes) and checking only
+        # the first would not notice them being swapped.
+        by_tile = {}
+        for key, exp in expect.items():
+            by_tile.setdefault(exp.get("_tile", key), []).append((key, exp))
         for t in dash["tiles"]:
             cfg, name = t["config"], t["name"]
-            if cfg.get("displayType") == "markdown" or name not in expect:
+            if cfg.get("displayType") == "markdown" or name not in by_tile:
                 continue
             seen.add(name)
-            exp = expect[name]
-            kind = exp.get("_kind", "wide" if cfg.get("sqlTemplate") else "builder")
-            print("  %s  [%s/%s]" % (name, "sql" if cfg.get("sqlTemplate") else "builder", kind))
-            KINDS[kind](cfg, name, exp)
-        # An expectation naming a tile that no longer exists is a silent loss of coverage.
-        for name in expect:
-            if name not in seen and expect[name].get("_dashboard", dname) == dname:
-                pass
+            for key, exp in by_tile[name]:
+                _run_one(cfg, name, key, exp)
+
+
+def _run_one(cfg, name, key, exp):
+    kind = exp.get("_kind", "wide" if cfg.get("sqlTemplate") else "builder")
+    label = name if key == name else "%s  -> %s" % (name, key)
+    print("  %s  [%s/%s]" % (label, "sql" if cfg.get("sqlTemplate") else "builder", kind))
+    KINDS[kind](cfg, name, exp)
 
 
 def check_row_caps():

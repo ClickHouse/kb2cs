@@ -784,7 +784,7 @@ export SHIFT_NS=$(SERVICE=mysql ../../ingest/clickstack/shift-ns.sh --align-hour
 ./load-mysql.sh                            # 2,780 rows into otel_logs
 python3 load-metrics.py --service mysql    # 115,200 metric points
 ./verify-mysql.sh                          # 36 checks
-python3 ../../../verify/verify-tiles-vs-elastic.py mysql   # 42 of its 157 series
+python3 ../../../verify/verify-tiles-vs-elastic.py mysql   # 42 of its 200 series
 ```
 
 Run the second one on any migration you touch. `verify-mysql.sh` asserts totals and structure;
@@ -900,7 +900,7 @@ export SHIFT_NS=$(SERVICE=system ../../ingest/clickstack/shift-ns.sh --align-hou
 ./load-system.sh                           # 56,224 rows into otel_logs
 python3 load-metrics.py --service system    # 396,000 metric points
 ./verify-system.sh                          # 44 checks
-python3 ../../../verify/verify-tiles-vs-elastic.py   # 157 tile series bucket-for-bucket
+python3 ../../../verify/verify-tiles-vs-elastic.py   # 200 tile series bucket-for-bucket
                                             #   (mysql/nginx/apache/postgres; system pending)
 python3 ../../../verify/verify-controls.py   # 15 checks on the dashboard dropdowns
 ```

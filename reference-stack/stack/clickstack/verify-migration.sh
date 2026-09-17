@@ -10,6 +10,10 @@
 #
 # Exits non-zero on the first failure and names the fix.
 set -uo pipefail
+# Run from this script's own directory. `docker compose exec` resolves the compose file
+# from the working directory, so without this the script only works when invoked from
+# here -- and reports "ClickHouse not reachable", which reads as a broken stack.
+cd "$(dirname "$0")"
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 EMAIL="${HDX_EMAIL:-train@example.com}"

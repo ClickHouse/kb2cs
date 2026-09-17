@@ -54,7 +54,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tilediff as td  # noqa: E402
 
-INTEGRATIONS = ("mysql", "nginx", "apache", "postgres")
+INTEGRATIONS = ("mysql", "nginx", "apache", "postgres", "system")
 
 
 def main(argv):

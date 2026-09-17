@@ -872,12 +872,12 @@ signals — a builder tile's `select[].metricType` *and* `otel_metrics_` in a SQ
 template — because metric dashboards here are overwhelmingly SQL (9 of 10 on the postgres
 one), and the builder-only check found nothing and never fired.
 
-## Closing the value gap: 157 tile series, bucket for bucket
+## Closing the value gap: 200 tile series, bucket for bucket
 
 Until 2026-09-17 `verify-tiles-vs-elastic.py` covered **mysql only** — 42 series. Everything
 else was verified by totals and distributions, which is a weaker claim than it sounds: a
 series can be the right shape, agree on its total, and be wrong in every bucket. Extending it
-to nginx, apache and postgres added **115 series** and found three defects in migrations that
+to the other four integrations added **158 series** and found three defects in migrations that
 were already green.
 
 | integration | series | logs / metrics | what extending it found |
@@ -886,13 +886,25 @@ were already green.
 | nginx | 23 | 12 / 11 | `Heartbeat / Up` under-counted hosts |
 | apache | 54 | 11 / 43 | `Scoreboard` truncated at its own row cap |
 | postgres | 38 | 7 / 31 | nothing wrong; two source-precision limits identified |
-| **total** | **157** | **30 / 127** | |
+| system | 43 | 11 / 32 | nothing wrong; coverage widened over the throwaway harness |
+| **total** | **200** | **41 / 159** | |
 
 The mysql logs dashboard contributes no series: its six tiles are `search` and `terms` panels,
 asserted by `verify-mysql.sh` instead.
 
+**`system` was ported last, on 2026-09-17, and porting it widened the coverage.** The
+harnesses the system migration had actually been verified with only ever existed outside the
+repo, and they checked 33 comparisons where the ported version checks 43 series: the
+throwaway code checked only ONE side of each bidirectional counter (`read bytes/s` but not
+the negated `write bytes/s`; `In (bytes)` but not `Out (bytes)`) and covered only one of the
+two degraded heatmaps. Both gaps were in the series a person had already eyeballed — which is
+the pattern this whole document keeps rediscovering. All five of its mutation tests fire,
+including the historical wrong-field bug: swapping `process.cpu.pct` for the core-normalised
+field turns a check red, where the original harness passed it by deriving its expectation
+from whatever the tile read.
+
 The harness was split into `../verify/tilediff.py` (machinery),
-`../verify/expect_{mysql,nginx,apache,postgres}.py` (expectations) and
+`../verify/expect_{mysql,nginx,apache,postgres,system}.py` (expectations) and
 `../verify/verify-tiles-vs-elastic.py` (entry point, takes integration names) — and then
 moved out of this directory entirely, because it is generic: every endpoint and credential
 comes from the environment via `../verify/conf.py`, so the same harness verifies a customer's

@@ -63,7 +63,7 @@ stack/clickstack/write-mcp-config.sh       regenerates .mcp.json with the live H
 stack/clickstack/verify-migration.sh       18 checks on the migrated nginx dashboards
 stack/clickstack/verify-{apache,metrics,apache-metrics,postgres,mysql,system}.sh
                                            the other six migrations (see INTEGRATIONS.md)
-../verify/verify-tiles-vs-elastic.py       diffs 157 tile series against ES bucket-for-bucket
+../verify/verify-tiles-vs-elastic.py       diffs 200 tile series against ES bucket-for-bucket
                                            (mysql, nginx, apache, postgres; takes names)
 ../verify/tilediff.py                      that harness's machinery
 ../verify/expect_*.py                      its per-integration Elastic expectations
