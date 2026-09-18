@@ -99,7 +99,15 @@ def call(tool, args, tries=8):
             t = c.get("text", "")
             try:
                 out.append(json.loads(t))
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError:
+                # A sampled column value can contain a literal control character, which
+                # strict JSON rejects. Falling through to the raw string instead makes every
+                # caller handle two return types; parsing it non-strictly does not.
+                try:
+                    out.append(json.loads(t, strict=False))
+                except json.JSONDecodeError:
+                    out.append(t)
+            except TypeError:
                 out.append(t)
         return out[0] if len(out) == 1 else out
     raise SystemExit("all %d attempts failed; last: %s" % (tries, last))

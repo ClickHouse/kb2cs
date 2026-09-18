@@ -304,6 +304,24 @@ def e_scalar(field, agg, ds, extra=None):
 # This keeps the property that matters: the query is still derived from the LIVE tile
 # (its aggFn, valueExpression, where and groupBy), not from a hand-written "equivalent" that
 # would re-encode whatever misunderstanding produced the tile and then agree with it.
+def coerced(expr):
+    """The expression the target actually aggregates, for a NUMERIC builder aggregation.
+
+        avg(`x`)  ->  AVG(toFloat64OrDefault(toString(`x`)))
+
+    Read off an "Unknown expression identifier" error the target echoed back, and asserted
+    end to end in `verify-ecs-source.py`. Irrelevant on the OTel tables, where `Value` is not
+    Nullable -- which is why `AGG` below does not use it and the 203 reference series are
+    unaffected. It matters the moment a source points at ECS-shaped rows:
+    `toFloat64OrDefault` yields its default for anything it cannot parse, and `toString(NULL)`
+    is NULL, so a NULL becomes a **zero that counts**. `avg`, `min` and `last_value` are
+    wrecked by that on a sparse table, `max` and `sum` survive, and `count_distinct` escapes
+    because it never goes through the cast. Compile with this when the column is Nullable, or
+    the expectation will disagree with a target that is behaving as designed.
+    """
+    return "toFloat64OrDefault(toString(%s))" % expr
+
+
 AGG = {"count": lambda e: "count()",
        "count_distinct": lambda e: "uniqExact(%s)" % e,
        "sum": lambda e: "sum(%s)" % e,
@@ -388,6 +406,25 @@ def float32_delta_tol(magnitude):
     if not magnitude or magnitude <= 0:
         return 1e-6
     return 2.0 * math.ldexp(1.0, math.frexp(float(magnitude))[1] - 24)
+
+
+def scaled_float_tol(expected):
+    """Tolerance for a field Elasticsearch stores as `scaled_float`.
+
+    ES keeps `round(v * scaling_factor)` and divides by the factor on the way out, in float64.
+    When the source value has no more decimals than the factor allows, that quotient is not
+    the same float64 as the literal -- it is the NEIGHBOURING one. So a `max`, which selects a
+    stored value and computes nothing, can still disagree in the last bit: on the reference
+    corpus 31 of 240 `system.load.5` series differed by exactly this, 5.294 against
+    5.2940000000000005.
+
+    One ULP, taken from the magnitude rather than from the size of the failure. Read the
+    field's `type` from `_mapping` to decide whether it applies at all: a `long` is exact and
+    needs no tolerance, and if the source values carry MORE decimals than the factor encodes,
+    the loss is real quantisation and this bound is too tight -- use the grid spacing
+    (1/scaling_factor) instead.
+    """
+    return math.ulp(float(expected)) if expected else 0.0
 
 
 def max_per_second(where, group_expr=None, value_expr=None):

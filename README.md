@@ -227,6 +227,22 @@ python3 verify/verify-tiles-vs-elastic.py
 # 6d. a human opens the two dashboards side by side
 ```
 
+If the customer is **keeping Filebeat/Metricbeat or Elastic Agent** for a proof of concept,
+there is a fifth thing to check first, because it changes what the tiles have to look like:
+
+```bash
+# does this deployment dashboard ECS as-is, and how does it treat a missing field?
+python3 verify/verify-ecs-source.py --yes            # 29 checks against its own fixture
+python3 verify/verify-ecs-source.py --yes --mutate   # 6 mutations, all must fire
+```
+
+It is the one script here that writes to the target: it creates a table and a view, both
+prefixed `kb2cs_ecs_probe`, and drops them again even on failure. The answer it gives is that
+ECS *can* stay — on a `log` source, for logs and metrics alike — but that a table holding
+several Beats metricsets is mostly NULL, and a NULL is read as **a zero that counts**, so
+`avg`, `min`, `last_value`, `count` and `quantile` come out silently wrong while every one of
+them renders. `skill/scripts/ecs-to-clickhouse.py` lands the data in the shape that avoids it.
+
 **The two diff passes need one file each pointed at your dashboards.** That is the only hand-written
 part, and it is deliberate: an expectation derived automatically from the tile would agree
 with the tile whatever it says. For the value diff copy `verify/expect_nginx.py` — it is the smallest of
@@ -341,6 +357,24 @@ are also cross-cluster, so the target may not hold the data at all.
 Across five integrations the pattern did not change: **the work is the data, not the
 translation.**
 
+### Also measured: keeping Beats or Elastic Agent for a proof of concept
+
+Not an integration, so it is not in the table above, but it is the question customers who are
+not ready to move their agents ask first. Measured 2026-09-18 on ClickStack 2.35.0:
+
+| question | answer |
+|---|---|
+| Can ECS **logs** be dashboarded without reshaping? | **Yes**, on a `log` source |
+| Can ECS **metrics**? | **Yes**, also on a `log` source — a `metric` source rejects a wide document |
+| How faithfully? | **1,005 series** over 36,000 real Metricbeat documents matched Elasticsearch, across `line`, `stacked_bar`, `table`, `number`, `bar`, `pie`, `search` and `sql` tiles |
+| What breaks? | A multi-metricset table is mostly NULL, and a NULL aggregates as **zero**. `avg`, `min`, `last_value`, `count`, `quantile` silently wrong; `max`, `sum`, `count_distinct` correct; all of them render |
+| Asserted where? | `verify/verify-ecs-source.py` — **29 checks, 6 mutations**, against a generated fixture, so a future ClickStack that changes this turns it red |
+
+This corrected a claim this repo previously made — that ECS metrics could not be kept at all.
+The [official agent-migration route](https://clickhouse.com/docs/use-cases/observability/clickstack/migration/elastic/migrating-agents)
+(Beats → Vector → OTLP) converts ECS to OTel in VRL and is documented as logs-only, so the
+above is what to do *instead* when a metrics PoC has to keep Metricbeat.
+
 ---
 
 ## The reference migration (optional, but it is how all of the above was found)
@@ -383,13 +417,16 @@ skill/            the migration procedure and its scripts — generic, no datase
   references/       integration→receiver coverage, field mapping, tile schema, Kibana
                     export shapes, enrichment, verification
   scripts/          export-dashboards.sh, inventory-panels.py, introspect-clickstack.py,
-                    audit-tiles.py, plan-collector.py (+ receiver-map.json)
-  scripts/tests/    run-all.sh — three suites, no stack required
+                    audit-tiles.py, plan-collector.py (+ receiver-map.json),
+                    ecs-to-clickhouse.py
+  scripts/tests/    run-all.sh — four suites, no stack required
 verify/           the verification harness — environment-driven, points anywhere
   conf.py           every endpoint and credential, from the environment
   tilediff.py       the bucket-for-bucket machinery
   expect_*.py       per-integration Elasticsearch expectations (copy one as a template)
   verify-tiles-vs-elastic.py, verify-controls.py
+  verify-ecs-source.py  can the target dashboard ECS as-is? the only script here that
+                    writes — it builds its own fixture and drops it again
 reference-stack/  the two stacks, the generators and the corpus documentation
 ```
 

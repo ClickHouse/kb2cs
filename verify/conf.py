@@ -76,7 +76,24 @@ def ch_query(sql, fmt="JSONCompact"):
     "this tile has no data", which is the single most misleading failure mode in this repo.
     Callers that legitimately tolerate failure catch it.
     """
-    q = sql + " FORMAT " + fmt
+    out = _run(sql + " FORMAT " + fmt)
+    if fmt != "JSONCompact":
+        return out
+    return json.loads(out) if out else {"meta": [], "data": []}
+
+
+def ch_statement(sql):
+    """Run a statement that returns no rows -- DDL, or `INSERT ... VALUES`.
+
+    Separate from `ch_query` because that one appends `FORMAT ...`, which a statement
+    rejects. Every other verifier in this directory is read-only and does not need this;
+    `verify-ecs-source.py` does, because the only way to learn how the target treats an
+    ECS-shaped table is to put one there.
+    """
+    return _run(sql)
+
+
+def _run(q):
     if CH_URL:
         params = urllib.parse.urlencode({"database": CH_DATABASE})
         req = urllib.request.Request(CH_URL + "/?" + params, data=q.encode(),
@@ -97,10 +114,7 @@ def ch_query(sql, fmt="JSONCompact"):
         if p.returncode:
             raise QueryError(p.stderr[:400])
         out = p.stdout
-    out = out.strip()
-    if fmt != "JSONCompact":
-        return out
-    return json.loads(out) if out else {"meta": [], "data": []}
+    return out.strip()
 
 
 def es_post(path, body):

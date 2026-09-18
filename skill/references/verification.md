@@ -60,6 +60,53 @@ belongs to. Measured with the clocks aligned: **0–3 rows per 30-minute bucket,
 No query can correct this. Do not chase it, and do not "fix" it by re-pointing ingestion at a
 different file unless that is independently the right call. State the bound and move on.
 
+## Rule 4: a NULL is not an absence, so check what the target does with one
+
+Elastic's aggregations skip a missing field. ClickHouse's native `avg` skips a NULL. Neither
+fact tells you what the *tile* does, and on ClickStack 2.35.0 the tile does something else: a
+numeric builder aggregation compiles to
+
+```sql
+AVG(toFloat64OrDefault(toString(`system.cpu.total.norm.pct`)))
+```
+
+and `toFloat64OrDefault` returns its default for anything it cannot parse — a NULL included.
+So a NULL becomes a **zero in the denominator**. That is invisible on the OTel metric tables,
+where `Value` is not Nullable, and ruinous the moment a source points at a table where a
+column is absent for most rows — which is every Beats-shaped table, because Beats writes one
+document per metricset.
+
+`avg`, `min`, `last_value`, `count` and `quantile` go wrong; `max`, `sum` and `count_distinct`
+survive. All eight render. The full table, the two fixes, and a 29-check assertion of it are in
+`sources.md` and `verify/verify-ecs-source.py`.
+
+The transferable rule is not "beware NULL". It is: **compile one aggregation and read the SQL
+the target generated**, rather than assuming it generated the obvious thing. The error message
+from a deliberately wrong column name will echo it back.
+
+## Rule 5: derive a tolerance from the source's CODEC, not from the aggregation
+
+"A `max` selects a stored value rather than computing one, so it must match exactly" is wrong,
+and it cost a green suite: 31 of 240 `system.load.5` series disagreed, at `5.294` against
+`5.2940000000000005`. The aggregation was exact. The **field** was `scaled_float(1000)`, so
+Elastic keeps `round(v * 1000)` and divides by 1000 in float64 on the way out — landing on the
+float64 *neighbour* of the literal the target parsed. One ULP, and it belongs to the codec, not
+to the query.
+
+So read `_mapping` before writing any tolerance:
+
+| ES type | tolerance |
+|---|---|
+| `long`, `integer` | zero. Exact |
+| `scaled_float(f)`, source has ≤ log₁₀(f) decimals | one ULP — `tilediff.scaled_float_tol()` |
+| `scaled_float(f)`, source has more decimals | the grid, `1/f`. This is real quantisation |
+| `float` (32-bit) | the single-precision grid at that magnitude — `tilediff.float32_delta_tol()` |
+| `double` | the float64 summation bound, `n · ε · max|term|` |
+
+Every one of those is computable before you see a failure. If you find yourself picking a
+tolerance *after* seeing how far apart two numbers were, you are fitting, and the check has
+stopped being a check.
+
 ## Mechanize it
 
 `clickstack_query_tiles` runs every tile of a dashboard in one call — use it rather than

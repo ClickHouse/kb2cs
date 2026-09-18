@@ -26,6 +26,11 @@ run "inventory-panels.py — parses every panel shape in the fixture" \
 run "plan-collector.py — classifies every verdict correctly" \
     python3 tests/test-plan-collector.py
 
+# The loader's schema decisions. A wrong column TYPE survives every later check: the load
+# succeeds, the tiles render, and a metric is quietly truncated or a NULL is quietly a zero.
+run "ecs-to-clickhouse.py — types every ECS field the way the target needs it" \
+    python3 tests/test-ecs-loader.py
+
 # The two halves of the receiver mapping are written twice on purpose; nothing else notices
 # when they diverge.
 run "receiver-map.json vs integration-to-receiver.md — still agree" \
