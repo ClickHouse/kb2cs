@@ -93,3 +93,82 @@ Write it down as an artifact, alongside the field mapping: **data view · target
 kind · note**. The note column carries the awkwardness — "ad-hoc, defined in 3 panels",
 "2 runtime fields re-expressed as countIf", "cross-cluster, remote data not ingested". A
 later reader needs the reasons more than the ids.
+
+## Can the target keep the SOURCE's schema? Logs yes, metrics no
+
+A question that decides scope, and worth answering before anyone maps a field: if the customer
+already has ECS-shaped rows in ClickHouse, must the dashboards be rewritten onto the OTel
+model, or can a source be pointed at ECS as it stands?
+
+**Measured on ClickStack 2.35.0, 2026-09-18**, against a deliberately hostile case — ECS as
+*flat typed columns*, no attribute `Map` anywhere, which is how ECS actually lands:
+
+```
+`@timestamp`  `message`  `service.name`  `log.level`  `trace.id`
+`source.ip`  `url.original`  `http.response.status_code`  `user_agent.name`  `event.duration`
+```
+
+### Logs: yes, and the reason is that a source stores EXPRESSIONS
+
+`clickstack_save_source` takes `timestampValueExpression`, `bodyExpression`,
+`serviceNameExpression`, `severityTextExpression`, `eventAttributesExpression` and the rest as
+**SQL expressions, not column names**. So the mapping happens in the source definition:
+
+```
+timestampValueExpression  : `@timestamp`
+bodyExpression            : message
+serviceNameExpression     : `service.name`
+severityTextExpression    : `log.level`
+eventAttributesExpression : map('source.ip', `source.ip`,
+                                'url.original', `url.original`,
+                                'http.response.status_code', toString(`http.response.status_code`),
+                                'user_agent.name', `user_agent.name`)
+```
+
+That last one is the interesting part: flat ECS columns can be *synthesised into* an attribute
+map by expression. The source was accepted and everything downstream worked —
+`describe_source` introspected it, `search` returned rows, `table` and `timeseries` aggregated
+correctly, a numeric ECS field averaged, and a two-tile dashboard rendered with data.
+
+> **The limitation, which is easy to assume away.** The source's semantic expressions do **not**
+> rewrite query identifiers. Only the timestamp expression reaches the generated SQL. A tile
+> referring to `Attributes['user_agent.name']`, `SeverityText`, `ServiceName`, `Body` or
+> `Timestamp` fails with *"Unknown expression identifier"* — all five rejected. Tiles must
+> reference the **source table's own column names**:
+>
+> ```
+> groupBy: `user_agent.name`        -- works
+> groupBy: Attributes['user_agent.name']   -- Unknown expression or function identifier `Attributes`
+> ```
+>
+> Simpler in one way, but you lose the attribute-map abstraction and ClickStack's semantic
+> identifiers inside queries, and anything downstream keyed on them.
+
+### Metrics: no, and the obstacle is shape rather than naming
+
+- `save_source` with `kind: metric` and no `metricTables` → rejected: **`metricTables: Required`**.
+- `metricTables: {gauge: <wide ECS metrics table>}` → **accepted**, then every query failed:
+  *"Unknown expression or function identifier `ScopeAttributes`"*.
+
+The metric query layer assumes the OTel metrics columns — `MetricName`, `Value`, `TimeUnix`,
+`ScopeAttributes` and friends — spread across one table per metric kind. ECS metrics are the
+opposite shape: **one wide document with many numeric fields** (`system.cpu.user.norm.pct`,
+`system.cpu.system.norm.pct`, …). Getting from there to here is an **unpivot, not a rename**,
+so there is nothing to be gained by keeping ECS names for metrics — you are reshaping the data
+either way.
+
+### What to do with this
+
+If ingestion is moving to the OTel collector, the question is moot: ECS-shaped rows never
+arrive. It matters in exactly one situation — **existing ECS history that someone wants
+queryable in ClickStack without re-ingesting**. There, logs are reachable through a source
+definition, and metrics are not without reshaping. Decide that before promising a dashboard
+over historical data.
+
+Two smaller notes from the same test, both easy to trip on:
+
+- The delete tools take **`id`**, where `patch_dashboard` takes `dashboardId` and the query
+  tools take `sourceId`. The key name is not consistent across the API; a wrong one fails
+  validation rather than doing something harmful, but it costs a round trip.
+- ClickStack cannot read Elasticsearch at all, so any version of this presupposes the rows are
+  already in ClickHouse. That migration is the real cost, not the schema.

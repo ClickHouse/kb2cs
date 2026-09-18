@@ -7,6 +7,10 @@ numbers as the originals.**
 A dashboard migration is three problems that fail in different ways, and the order matters:
 
 1. **Schema** — ECS typed fields against a `Map(LowCardinality(String), String)`. Mechanical.
+   Usually you translate the dashboards onto the OTel model, because if ingestion moves to the
+   OTel collector then ECS names never arrive. If instead you need *existing* ECS rows in
+   ClickHouse queryable without re-ingesting: **logs can be, metrics cannot** — measured, in
+   [`skill/references/sources.md`](skill/references/sources.md).
 2. **Visualization vocabulary** — the target has fewer chart types than the source. *Not*
    solvable; must be declared before you start translating.
 3. **Index-time enrichment** — geo, user-agent, anything an ingest pipeline computed does not

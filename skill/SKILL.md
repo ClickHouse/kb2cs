@@ -92,7 +92,7 @@ Show the panel table to the user and settle the `NOT MIGRATABLE` / `UNKNOWN` row
 
 ### 2. If ingestion is moving to the OTel collector, derive its config from the panels
 
-**Do this before inventorying the target, because until the collector is configured there is nothing in the target to inventory.** The usual path into ClickStack is to move collection to the OTel collector, which means someone has to write that config — and what it must emit is decided by the panels you have chosen to keep. Skipping this step is how a migration discovers mid-flight that a panel has no data.
+**Do this before inventorying the target, because until the collector is configured there is nothing in the target to inventory.** If instead the customer already has **source-schema (ECS) rows in ClickHouse** and wants them queryable without re-ingesting, that is a different question with a measured answer: logs can be reached by pointing a source at them, metrics cannot. See `references/sources.md`, "Can the target keep the SOURCE's schema?". The usual path into ClickStack is to move collection to the OTel collector, which means someone has to write that config — and what it must emit is decided by the panels you have chosen to keep. Skipping this step is how a migration discovers mid-flight that a panel has no data.
 
 ```bash
 python3 "$SKILL"/scripts/inventory-panels.py dashboards.ndjson --fields > fields.txt
@@ -306,7 +306,7 @@ When it happens, do not "fix" the target into agreeing. Assert the disagreement 
 | file | read it when |
 |---|---|
 | `scripts/audit-tiles.py` | after creating tiles, before the visual pass — structural diff of every tile against its panel |
-| `references/sources.md` | mapping data views to sources; ad-hoc views, runtime fields, cross-cluster |
+| `references/sources.md` | mapping data views to sources; ad-hoc views, runtime fields, cross-cluster — and whether the target can keep the SOURCE's schema (logs yes, metrics no) |
 | `references/integration-to-receiver.md` | **before planning a metrics migration** (and `scripts/plan-collector.py` automates it) — per-integration Elastic → OTel receiver coverage: maps / reshaped / default-off / absent |
 | `references/field-mapping.md` | translating any field; ECS → `LogAttributes`, casts, derived expressions |
 | `references/clickstack-tiles.md` | writing a tile; schema, `displayType` table, filter placement |
