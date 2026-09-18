@@ -1,0 +1,1102 @@
+{
+ "_meta": {
+  "purpose": "Elastic integration field -> OTel receiver metric. Machine-readable twin of references/integration-to-receiver.md; used by scripts/plan-collector.py.",
+  "verified": "2026-09-18",
+  "source": "each receiver's documentation.md / metadata.yaml in opentelemetry-collector-contrib",
+  "verdicts": {
+   "default": "the receiver emits it with a default config -- nothing to configure",
+   "optional": "the receiver has it but it is OFF by default -- enable it explicitly",
+   "check": "a near equivalent exists but the semantics or the attribute value were not confirmed",
+   "absent": "no equivalent on this receiver -- see `alternative`",
+   "derive": "no metric needed; compute it in the tile from others -- see `how`",
+   "dimension": "not a metric at all; it becomes an attribute -- see `how`"
+  },
+  "reshaped": "true when several source fields collapse into one metric carrying a dimension"
+ },
+ "receivers": {
+  "nginx": {
+   "component": "nginxreceiver"
+  },
+  "apache": {
+   "component": "apachereceiver",
+   "warning": "a feature gate renames these to apache.request.count / apache.worker.status / apache.connection.status and moves the attributes to apache.*.state"
+  },
+  "mysql": {
+   "component": "mysqlreceiver"
+  },
+  "postgresql": {
+   "component": "postgresqlreceiver"
+  },
+  "hostmetrics": {
+   "component": "hostmetricsreceiver",
+   "note": "per-scraper; every *.utilization metric is optional and the default is the absolute counter"
+  },
+  "sqlquery": {
+   "component": "sqlqueryreceiver",
+   "warning": "metrics support is ALPHA; metric names are whatever the operator's SELECT aliased"
+  }
+ },
+ "fields": {
+  "apache.status.bytes_per_request": {
+   "receiver": "apache",
+   "verdict": "derive",
+   "how": "apache.traffic / apache.requests"
+  },
+  "apache.status.bytes_per_sec": {
+   "receiver": "apache",
+   "verdict": "derive",
+   "how": "apache.traffic / apache.uptime"
+  },
+  "apache.status.connections.async.closing": {
+   "receiver": "apache",
+   "metric": "apache.connections.async",
+   "attribute": {
+    "connection_state": "closing"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.connections.async.keep_alive": {
+   "receiver": "apache",
+   "metric": "apache.connections.async",
+   "attribute": {
+    "connection_state": "keepalive"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.connections.async.writing": {
+   "receiver": "apache",
+   "metric": "apache.connections.async",
+   "attribute": {
+    "connection_state": "writing"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.connections.total": {
+   "receiver": "apache",
+   "metric": "apache.current_connections",
+   "verdict": "default"
+  },
+  "apache.status.cpu.children_system": {
+   "receiver": "apache",
+   "metric": "apache.cpu.time",
+   "attribute": {
+    "level": "children",
+    "mode": "system"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.cpu.children_user": {
+   "receiver": "apache",
+   "metric": "apache.cpu.time",
+   "attribute": {
+    "level": "children",
+    "mode": "user"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.cpu.load": {
+   "receiver": "apache",
+   "metric": "apache.cpu.load",
+   "verdict": "default"
+  },
+  "apache.status.cpu.system": {
+   "receiver": "apache",
+   "metric": "apache.cpu.time",
+   "attribute": {
+    "level": "self",
+    "mode": "system"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.cpu.user": {
+   "receiver": "apache",
+   "metric": "apache.cpu.time",
+   "attribute": {
+    "level": "self",
+    "mode": "user"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.load.1": {
+   "receiver": "apache",
+   "metric": "apache.load.1",
+   "verdict": "default"
+  },
+  "apache.status.load.15": {
+   "receiver": "apache",
+   "metric": "apache.load.15",
+   "verdict": "default"
+  },
+  "apache.status.load.5": {
+   "receiver": "apache",
+   "metric": "apache.load.5",
+   "verdict": "default"
+  },
+  "apache.status.requests_per_sec": {
+   "receiver": "apache",
+   "verdict": "derive",
+   "how": "apache.requests / apache.uptime"
+  },
+  "apache.status.scoreboard.closing_connection": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "closing"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.dns_lookup": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "dnslookup"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.gracefully_finishing": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "finishing"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.idle_cleanup": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "idle_cleanup"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.keepalive": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "keepalive"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.logging": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "logging"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.open_slot": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "open"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.reading_request": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "reading"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.sending_reply": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "sending"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.starting_up": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "starting"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.scoreboard.total": {
+   "receiver": "apache",
+   "verdict": "derive",
+   "how": "sum of apache.scoreboard across all scoreboard_state values"
+  },
+  "apache.status.scoreboard.waiting_for_connection": {
+   "receiver": "apache",
+   "metric": "apache.scoreboard",
+   "attribute": {
+    "scoreboard_state": "waiting"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.total_accesses": {
+   "receiver": "apache",
+   "metric": "apache.requests",
+   "verdict": "default"
+  },
+  "apache.status.total_bytes": {
+   "receiver": "apache",
+   "metric": "apache.traffic",
+   "verdict": "default"
+  },
+  "apache.status.uptime.server_uptime": {
+   "receiver": "apache",
+   "metric": "apache.uptime",
+   "verdict": "default"
+  },
+  "apache.status.uptime.uptime": {
+   "receiver": "apache",
+   "metric": "apache.uptime",
+   "verdict": "default"
+  },
+  "apache.status.workers.busy": {
+   "receiver": "apache",
+   "metric": "apache.workers",
+   "attribute": {
+    "workers_state": "busy"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "apache.status.workers.idle": {
+   "receiver": "apache",
+   "metric": "apache.workers",
+   "attribute": {
+    "workers_state": "idle"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.replica_status.seconds_behind_source": {
+   "receiver": "mysql",
+   "metric": "mysql.replica.time_behind_source",
+   "verdict": "optional"
+  },
+  "mysql.replica_status.source.binary_log_file": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW REPLICA STATUS"
+  },
+  "mysql.replica_status.source.file_info": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW REPLICA STATUS"
+  },
+  "mysql.replica_status.source.host.name": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW REPLICA STATUS"
+  },
+  "mysql.replica_status.source.log_position.exec": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW REPLICA STATUS"
+  },
+  "mysql.replica_status.source.log_position.read": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW REPLICA STATUS"
+  },
+  "mysql.replica_status.source.server.id": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW REPLICA STATUS"
+  },
+  "mysql.replica_status.source.server.uuid": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW REPLICA STATUS"
+  },
+  "mysql.replica_status.thread.sql.delay.sec": {
+   "receiver": "mysql",
+   "metric": "mysql.replica.sql_delay",
+   "verdict": "optional"
+  },
+  "mysql.status.aborted.clients": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW GLOBAL STATUS (Ssl_* / Aborted_* are not exposed by mysqlreceiver; its connection.errors covers Connection_errors_* only)"
+  },
+  "mysql.status.aborted.connects": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW GLOBAL STATUS (Ssl_* / Aborted_* are not exposed by mysqlreceiver; its connection.errors covers Connection_errors_* only)"
+  },
+  "mysql.status.bytes.received": {
+   "receiver": "mysql",
+   "metric": "mysql.client.network.io",
+   "attribute": {
+    "kind": "received"
+   },
+   "verdict": "optional",
+   "reshaped": true,
+   "note": "renamed and reshaped"
+  },
+  "mysql.status.bytes.sent": {
+   "receiver": "mysql",
+   "metric": "mysql.client.network.io",
+   "attribute": {
+    "kind": "sent"
+   },
+   "verdict": "optional",
+   "reshaped": true,
+   "note": "renamed and reshaped"
+  },
+  "mysql.status.cache.ssl.hits": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW GLOBAL STATUS (Ssl_* / Aborted_* are not exposed by mysqlreceiver; its connection.errors covers Connection_errors_* only)"
+  },
+  "mysql.status.cache.ssl.misses": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW GLOBAL STATUS (Ssl_* / Aborted_* are not exposed by mysqlreceiver; its connection.errors covers Connection_errors_* only)"
+  },
+  "mysql.status.cache.ssl.size": {
+   "receiver": "mysql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SHOW GLOBAL STATUS (Ssl_* / Aborted_* are not exposed by mysqlreceiver; its connection.errors covers Connection_errors_* only)"
+  },
+  "mysql.status.cache.table.open_cache.hits": {
+   "receiver": "mysql",
+   "metric": "mysql.table_open_cache",
+   "attribute": {
+    "status": "hit"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.cache.table.open_cache.misses": {
+   "receiver": "mysql",
+   "metric": "mysql.table_open_cache",
+   "attribute": {
+    "status": "miss"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.cache.table.open_cache.overflows": {
+   "receiver": "mysql",
+   "metric": "mysql.table_open_cache",
+   "attribute": {
+    "status": "overflow"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.command.delete": {
+   "receiver": "mysql",
+   "metric": "mysql.commands",
+   "attribute": {
+    "command": "delete"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.command.insert": {
+   "receiver": "mysql",
+   "metric": "mysql.commands",
+   "attribute": {
+    "command": "insert"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.command.select": {
+   "receiver": "mysql",
+   "metric": "mysql.commands",
+   "attribute": {
+    "command": "select"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.command.update": {
+   "receiver": "mysql",
+   "metric": "mysql.commands",
+   "attribute": {
+    "command": "update"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.connection.errors.accept": {
+   "receiver": "mysql",
+   "metric": "mysql.connection.errors",
+   "attribute": {
+    "error": "accept"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.connection.errors.internal": {
+   "receiver": "mysql",
+   "metric": "mysql.connection.errors",
+   "attribute": {
+    "error": "internal"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.connection.errors.max": {
+   "receiver": "mysql",
+   "metric": "mysql.connection.errors",
+   "attribute": {
+    "error": "max"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.connection.errors.peer_address": {
+   "receiver": "mysql",
+   "metric": "mysql.connection.errors",
+   "attribute": {
+    "error": "peer_address"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.connection.errors.select": {
+   "receiver": "mysql",
+   "metric": "mysql.connection.errors",
+   "attribute": {
+    "error": "select"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "mysql.status.connections": {
+   "receiver": "mysql",
+   "metric": "mysql.connection.count",
+   "verdict": "optional"
+  },
+  "mysql.status.innodb.buffer_pool.pages.data": {
+   "receiver": "mysql",
+   "metric": "mysql.buffer_pool.pages",
+   "attribute": {
+    "kind": "data"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.status.innodb.buffer_pool.pages.free": {
+   "receiver": "mysql",
+   "metric": "mysql.buffer_pool.pages",
+   "attribute": {
+    "kind": "free"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.status.innodb.buffer_pool.pages.misc": {
+   "receiver": "mysql",
+   "metric": "mysql.buffer_pool.pages",
+   "attribute": {
+    "kind": "misc"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.status.innodb.buffer_pool.pages.total": {
+   "receiver": "mysql",
+   "metric": "mysql.buffer_pool.pages",
+   "attribute": {
+    "kind": "total"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.status.innodb.buffer_pool.pool.reads": {
+   "receiver": "mysql",
+   "metric": "mysql.buffer_pool.operations",
+   "verdict": "check",
+   "reshaped": true,
+   "note": "exists as mysql.buffer_pool.operations + `operation`, but the operation value for read-requests/reads was not confirmed against metadata.yaml"
+  },
+  "mysql.status.innodb.buffer_pool.read.requests": {
+   "receiver": "mysql",
+   "metric": "mysql.buffer_pool.operations",
+   "verdict": "check",
+   "reshaped": true,
+   "note": "exists as mysql.buffer_pool.operations + `operation`, but the operation value for read-requests/reads was not confirmed against metadata.yaml"
+  },
+  "mysql.status.max_used_connections": {
+   "receiver": "mysql",
+   "metric": "mysql.max_used_connections",
+   "verdict": "optional"
+  },
+  "mysql.status.open.files": {
+   "receiver": "mysql",
+   "metric": "mysql.opened_resources",
+   "attribute": {
+    "kind": "file"
+   },
+   "verdict": "check",
+   "reshaped": true,
+   "note": "mysql.opened_resources counts resources OPENED (cumulative); the Elastic field is a current gauge. mysql.table.open is the current gauge, tables only"
+  },
+  "mysql.status.open.streams": {
+   "receiver": "mysql",
+   "metric": "mysql.opened_resources",
+   "attribute": {
+    "kind": "table_definition"
+   },
+   "verdict": "check",
+   "reshaped": true,
+   "note": "mysql.opened_resources counts resources OPENED (cumulative); the Elastic field is a current gauge. mysql.table.open is the current gauge, tables only"
+  },
+  "mysql.status.open.tables": {
+   "receiver": "mysql",
+   "metric": "mysql.opened_resources",
+   "attribute": {
+    "kind": "table"
+   },
+   "verdict": "check",
+   "reshaped": true,
+   "note": "mysql.opened_resources counts resources OPENED (cumulative); the Elastic field is a current gauge. mysql.table.open is the current gauge, tables only"
+  },
+  "mysql.status.questions": {
+   "receiver": "mysql",
+   "metric": "mysql.query.count",
+   "verdict": "optional",
+   "note": "renamed"
+  },
+  "mysql.status.threads.cached": {
+   "receiver": "mysql",
+   "metric": "mysql.threads",
+   "attribute": {
+    "kind": "cached"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.status.threads.connected": {
+   "receiver": "mysql",
+   "metric": "mysql.threads",
+   "attribute": {
+    "kind": "connected"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.status.threads.created": {
+   "receiver": "mysql",
+   "metric": "mysql.threads",
+   "attribute": {
+    "kind": "created"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "mysql.status.threads.running": {
+   "receiver": "mysql",
+   "metric": "mysql.threads",
+   "attribute": {
+    "kind": "running"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "nginx.stubstatus.accepts": {
+   "receiver": "nginx",
+   "metric": "nginx.connections_accepted",
+   "verdict": "default"
+  },
+  "nginx.stubstatus.active": {
+   "receiver": "nginx",
+   "metric": "nginx.connections_current",
+   "attribute": {
+    "state": "active"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "nginx.stubstatus.dropped": {
+   "receiver": "nginx",
+   "verdict": "derive",
+   "how": "nginx.connections_accepted - nginx.connections_handled"
+  },
+  "nginx.stubstatus.handled": {
+   "receiver": "nginx",
+   "metric": "nginx.connections_handled",
+   "verdict": "default"
+  },
+  "nginx.stubstatus.reading": {
+   "receiver": "nginx",
+   "metric": "nginx.connections_current",
+   "attribute": {
+    "state": "reading"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "nginx.stubstatus.requests": {
+   "receiver": "nginx",
+   "metric": "nginx.requests",
+   "verdict": "default"
+  },
+  "nginx.stubstatus.waiting": {
+   "receiver": "nginx",
+   "metric": "nginx.connections_current",
+   "attribute": {
+    "state": "waiting"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "nginx.stubstatus.writing": {
+   "receiver": "nginx",
+   "metric": "nginx.connections_current",
+   "attribute": {
+    "state": "writing"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "postgresql.database.blocks.time.read.ms": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SELECT blk_read_time FROM pg_stat_database"
+  },
+  "postgresql.database.blocks.time.write.ms": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SELECT blk_write_time FROM pg_stat_database"
+  },
+  "postgresql.database.conflicts": {
+   "receiver": "postgresql",
+   "metric": "postgresql.query.conflicts",
+   "verdict": "optional"
+  },
+  "postgresql.database.deadlocks": {
+   "receiver": "postgresql",
+   "metric": "postgresql.deadlocks",
+   "verdict": "optional"
+  },
+  "postgresql.database.name": {
+   "receiver": "postgresql",
+   "verdict": "dimension",
+   "how": "attribute `db.namespace` on postgresqlreceiver metrics"
+  },
+  "postgresql.database.rows.deleted": {
+   "receiver": "postgresql",
+   "metric": "postgresql.tup_deleted",
+   "verdict": "optional"
+  },
+  "postgresql.database.rows.fetched": {
+   "receiver": "postgresql",
+   "metric": "postgresql.tup_fetched",
+   "verdict": "optional"
+  },
+  "postgresql.database.rows.inserted": {
+   "receiver": "postgresql",
+   "metric": "postgresql.tup_inserted",
+   "verdict": "optional"
+  },
+  "postgresql.database.rows.returned": {
+   "receiver": "postgresql",
+   "metric": "postgresql.tup_returned",
+   "verdict": "optional"
+  },
+  "postgresql.database.rows.updated": {
+   "receiver": "postgresql",
+   "metric": "postgresql.tup_updated",
+   "verdict": "optional"
+  },
+  "postgresql.database.transactions.commit": {
+   "receiver": "postgresql",
+   "metric": "postgresql.commits",
+   "verdict": "default"
+  },
+  "postgresql.database.transactions.rollback": {
+   "receiver": "postgresql",
+   "metric": "postgresql.rollbacks",
+   "verdict": "default"
+  },
+  "postgresql.statement.query.calls": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SELECT query, calls FROM pg_stat_statements"
+  },
+  "postgresql.statement.query.memory.local.hit": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "degrades_to": "postgresql.blks_hit (per DATABASE, loses the per-query dimension)",
+   "alternative": "sqlqueryreceiver: pg_stat_statements local_blks_hit"
+  },
+  "postgresql.statement.query.memory.local.read": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "degrades_to": "postgresql.blks_read (per DATABASE, loses the per-query dimension)",
+   "alternative": "sqlqueryreceiver: pg_stat_statements local_blks_read"
+  },
+  "postgresql.statement.query.memory.shared.hit": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "degrades_to": "postgresql.blks_hit (per DATABASE, loses the per-query dimension)",
+   "alternative": "sqlqueryreceiver: pg_stat_statements shared_blks_hit"
+  },
+  "postgresql.statement.query.memory.shared.read": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "degrades_to": "postgresql.blks_read (per DATABASE, loses the per-query dimension)",
+   "alternative": "sqlqueryreceiver: pg_stat_statements shared_blks_read"
+  },
+  "postgresql.statement.query.rows": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "alternative": "sqlqueryreceiver: SELECT query, rows FROM pg_stat_statements"
+  },
+  "postgresql.statement.query.text": {
+   "receiver": "postgresql",
+   "verdict": "dimension",
+   "how": "an attribute_columns entry on the sqlqueryreceiver query, not a metric"
+  },
+  "postgresql.statement.query.time.total.ms": {
+   "receiver": "postgresql",
+   "verdict": "absent",
+   "degrades_to": "postgresql.query.execution.time (per DATABASE, loses the per-query dimension)",
+   "alternative": "sqlqueryreceiver: SELECT query, total_exec_time FROM pg_stat_statements"
+  },
+  "process.cpu.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "process",
+   "metric": "process.cpu.utilization",
+   "verdict": "optional",
+   "note": "V0 and NOT normalised by core count. No `system.` prefix on the receiver metric"
+  },
+  "process.name": {
+   "receiver": "hostmetrics",
+   "scraper": "process",
+   "verdict": "dimension",
+   "how": "RESOURCE attribute `process.executable.name`, not a data-point attribute"
+  },
+  "process.pid": {
+   "receiver": "hostmetrics",
+   "scraper": "process",
+   "verdict": "dimension",
+   "how": "RESOURCE attribute `process.pid`"
+  },
+  "system.cpu.idle.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "idle"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "system.cpu.iowait.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "wait"
+   },
+   "verdict": "optional",
+   "reshaped": true,
+   "note": "state RENAMED: iowait -> wait"
+  },
+  "system.cpu.irq.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "interrupt"
+   },
+   "verdict": "optional",
+   "reshaped": true,
+   "note": "state RENAMED: irq -> interrupt"
+  },
+  "system.cpu.nice.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "nice"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "system.cpu.softirq.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "softirq"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "system.cpu.steal.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "steal"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "system.cpu.system.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "system"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "system.cpu.total.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "verdict": "derive",
+   "how": "1 - system.cpu.utilization{state=idle}, or the sum of the non-idle states"
+  },
+  "system.cpu.user.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "cpu",
+   "metric": "system.cpu.utilization",
+   "attribute": {
+    "state": "user"
+   },
+   "verdict": "optional",
+   "reshaped": true
+  },
+  "system.diskio.read.bytes": {
+   "receiver": "hostmetrics",
+   "scraper": "disk",
+   "metric": "system.disk.io",
+   "attribute": {
+    "direction": "read"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.diskio.write.bytes": {
+   "receiver": "hostmetrics",
+   "scraper": "disk",
+   "metric": "system.disk.io",
+   "attribute": {
+    "direction": "write"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.filesystem.mount_point": {
+   "receiver": "hostmetrics",
+   "scraper": "filesystem",
+   "verdict": "dimension",
+   "how": "attribute `mountpoint`"
+  },
+  "system.filesystem.used.bytes": {
+   "receiver": "hostmetrics",
+   "scraper": "filesystem",
+   "metric": "system.filesystem.usage",
+   "attribute": {
+    "state": "used"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.filesystem.used.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "filesystem",
+   "metric": "system.filesystem.utilization",
+   "verdict": "optional"
+  },
+  "system.fsstat.total_size.total": {
+   "receiver": "hostmetrics",
+   "scraper": "filesystem",
+   "verdict": "derive",
+   "how": "no fsstat equivalent: aggregate system.filesystem.usage across mountpoints"
+  },
+  "system.fsstat.total_size.used": {
+   "receiver": "hostmetrics",
+   "scraper": "filesystem",
+   "verdict": "derive",
+   "how": "no fsstat equivalent: aggregate system.filesystem.usage across mountpoints"
+  },
+  "system.load.1": {
+   "receiver": "hostmetrics",
+   "scraper": "load",
+   "metric": "system.cpu.load_average.1m",
+   "verdict": "default",
+   "note": "renamed and re-parented"
+  },
+  "system.load.15": {
+   "receiver": "hostmetrics",
+   "scraper": "load",
+   "metric": "system.cpu.load_average.15m",
+   "verdict": "default",
+   "note": "renamed and re-parented"
+  },
+  "system.load.5": {
+   "receiver": "hostmetrics",
+   "scraper": "load",
+   "metric": "system.cpu.load_average.5m",
+   "verdict": "default",
+   "note": "renamed and re-parented"
+  },
+  "system.memory.actual.used.bytes": {
+   "receiver": "hostmetrics",
+   "scraper": "memory",
+   "metric": "system.memory.usage",
+   "attribute": {
+    "state": "used"
+   },
+   "verdict": "check",
+   "reshaped": true,
+   "note": "no `actual_used` state exists; see system.memory.used.bytes"
+  },
+  "system.memory.actual.used.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "memory",
+   "metric": "system.memory.utilization",
+   "attribute": {
+    "state": "used"
+   },
+   "verdict": "optional"
+  },
+  "system.memory.free": {
+   "receiver": "hostmetrics",
+   "scraper": "memory",
+   "metric": "system.memory.usage",
+   "attribute": {
+    "state": "free"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.memory.swap.used.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "paging",
+   "metric": "system.paging.utilization",
+   "attribute": {
+    "state": "used"
+   },
+   "verdict": "optional"
+  },
+  "system.memory.total": {
+   "receiver": "hostmetrics",
+   "scraper": "memory",
+   "metric": "system.memory.limit",
+   "verdict": "optional"
+  },
+  "system.memory.used.bytes": {
+   "receiver": "hostmetrics",
+   "scraper": "memory",
+   "metric": "system.memory.usage",
+   "attribute": {
+    "state": "used"
+   },
+   "verdict": "check",
+   "reshaped": true,
+   "note": "the receiver's `used` excludes buffers/cache on Linux, so it is closer to Elastic's actual.used than to used.bytes. Reconstruct from the state breakdown and verify"
+  },
+  "system.network.in.bytes": {
+   "receiver": "hostmetrics",
+   "scraper": "network",
+   "metric": "system.network.io",
+   "attribute": {
+    "direction": "receive"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.network.in.dropped": {
+   "receiver": "hostmetrics",
+   "scraper": "network",
+   "metric": "system.network.dropped",
+   "attribute": {
+    "direction": "receive"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.network.in.packets": {
+   "receiver": "hostmetrics",
+   "scraper": "network",
+   "metric": "system.network.packets",
+   "attribute": {
+    "direction": "receive"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.network.name": {
+   "receiver": "hostmetrics",
+   "scraper": "network",
+   "verdict": "dimension",
+   "how": "attribute `device`"
+  },
+  "system.network.out.bytes": {
+   "receiver": "hostmetrics",
+   "scraper": "network",
+   "metric": "system.network.io",
+   "attribute": {
+    "direction": "transmit"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.network.out.dropped": {
+   "receiver": "hostmetrics",
+   "scraper": "network",
+   "metric": "system.network.dropped",
+   "attribute": {
+    "direction": "transmit"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.network.out.packets": {
+   "receiver": "hostmetrics",
+   "scraper": "network",
+   "metric": "system.network.packets",
+   "attribute": {
+    "direction": "transmit"
+   },
+   "verdict": "default",
+   "reshaped": true
+  },
+  "system.process.cpu.total.norm.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "process",
+   "metric": "process.cpu.utilization@v1",
+   "attribute": {
+    "cpu.mode": "*"
+   },
+   "verdict": "optional",
+   "note": "V1 IS normalised by CPU count. Choosing the wrong variant is a 4-16x error"
+  },
+  "system.process.memory.rss.pct": {
+   "receiver": "hostmetrics",
+   "scraper": "process",
+   "metric": "process.memory.utilization",
+   "verdict": "optional",
+   "note": "no `system.` prefix"
+  }
+ }
+}

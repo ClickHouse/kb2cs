@@ -82,15 +82,46 @@ python3 "$SKILL"/scripts/inventory-panels.py dashboards.ndjson --fields  # field
 
 Two parsing facts that cost time if rediscovered by hand: panels are usually stored **by value** inside `attributes.panelsJSON` (a JSON *string*), not as referenced saved objects; and for Lens panels the field you want is `sourceField` inside `datasourceStates.formBased.layers.*.columns`. `inventory-panels.py` handles both, plus legacy `visState` aggs, TSVB, maps and saved searches — read `references/kibana-export.md` if a panel type comes back `unknown`.
 
-`--fields` emits the complete set of source fields the dashboards depend on — that list, not the index mappings, is what you diff against the target in step 2. Mappings declare far more fields than any dashboard uses.
+`--fields` emits the complete set of source fields the dashboards depend on — that list, not the index mappings, is what you diff against the target in step 3. Mappings declare far more fields than any dashboard uses.
 
-Show the panel table to the user and settle the `NOT MIGRATABLE` / `UNKNOWN` rows before translating anything (see step 3).
+Show the panel table to the user and settle the `NOT MIGRATABLE` / `UNKNOWN` rows before translating anything (see step 4).
 
 **Do not stop at panels.** A dashboard's **control bar** (`controlGroupInput`) is a row of field-bound dropdowns that filters every panel, it lives outside `panelsJSON`, and it maps one-to-one onto ClickStack's dashboard-level `filters`. **21 of 37 dashboards in the reference estate carry one and 7 of 17 migrated dashboards silently lost it.** `inventory-panels.py` prints a `Dashboard controls` line; `references/kibana-export.md` has the shape, the `sourceMetricType` trap that makes a migrated one render empty, and — the follow-on that caught the same dashboards twice — why you must diff each dropdown's **option set** against the source rather than assert it is non-empty. Note before judging a dropdown "too broad": a Kibana control resolves against the **data view it is bound to**, normally the broad `logs-*`/`metrics-*` pattern, so an unscoped option list on the target is usually faithful.
 
 To check the parser after editing it: `python3 scripts/tests/make-fixture.py > /tmp/f.ndjson && python3 scripts/inventory-panels.py /tmp/f.ndjson` — the fixture exercises every panel shape the script claims to handle.
 
-### 2. Map data views to sources, inventory the target, then triage
+### 2. If ingestion is moving to the OTel collector, derive its config from the panels
+
+**Do this before inventorying the target, because until the collector is configured there is nothing in the target to inventory.** The usual path into ClickStack is to move collection to the OTel collector, which means someone has to write that config — and what it must emit is decided by the panels you have chosen to keep. Skipping this step is how a migration discovers mid-flight that a panel has no data.
+
+```bash
+python3 "$SKILL"/scripts/inventory-panels.py dashboards.ndjson --fields > fields.txt
+python3 "$SKILL"/scripts/plan-collector.py fields.txt          # the full plan
+python3 "$SKILL"/scripts/plan-collector.py fields.txt --yaml    # just the receivers: block
+```
+
+It classifies every field the panels depend on, and the useful answer is rarely "renamed":
+
+| verdict | meaning |
+|---|---|
+| **default** | the receiver emits it with a stock config — nothing to do |
+| **optional** | it exists but is **off by default** — enable it. The commonest outcome |
+| **reshaped** | several source fields collapse into one metric carrying a dimension, so the panel is a rewrite |
+| **absent** | no standard receiver emits it — another receiver, usually `sqlqueryreceiver` |
+| **derive** | no metric needed; compute it in the tile |
+| **dimension** | not a metric at all; it becomes an attribute |
+
+> **The trap worth internalising: every hostmetrics `*.utilization` metric is optional, and the default is the absolute counter.** Elastic hands you percentages; OTel makes percentages opt-in. Any dashboard built on Elastic's `*.pct` fields needs either a collector change or a ratio computed in the tile — and that is a decision to take here, not a surprise to hit later.
+
+The mapping behind it is `scripts/receiver-map.json`, with the human-readable twin and its
+caveats in `references/integration-to-receiver.md`. **Read the receiver's own `metadata.yaml`
+before accepting an `absent` verdict** — in the reference project that claim was wrong twice,
+and both times the panel was migratable.
+
+Worked collector configs for five integrations, written against this exact plan, are in the
+reference stack: `reference-stack/ingest/clickstack/otel-collector-{nginx,apache,postgres,mysql,system}.yaml`.
+
+### 3. Map data views to sources, inventory the target, then triage
 
 **Every tile carries exactly one `sourceId`, so this mapping gates all translation.** Do it before writing a query: a dashboard whose panels read several data views may not be one dashboard on the target.
 
@@ -126,7 +157,7 @@ python3 "$SKILL"/scripts/inventory-panels.py dashboards.ndjson --triage
 
 It splits every panel into *ready* (a direct translation exists), *decide* (translatable, but something is lost or must be re-expressed — it names which) and *blocked*, and nominates a first dashboard: decision-free, and exercising as many distinct tile types as it can. `ready` means nothing is known to stand in the way — **not** that the tile will be correct. That is still step 6.
 
-### 3. Declare the losses before building anything
+### 4. Declare the losses before building anything
 
 Say this at the start of the migration report, not when you reach the panel.
 
@@ -139,7 +170,7 @@ Say this at the start of the migration report, not when you reach the panel.
 
 For index-time enrichment (geo, user agent, anything an ingest pipeline computed), the honest framing is narrower than "it cannot be recovered": what does not travel is the *computation*, and re-expressing it on ClickHouse costs a dictionary, not a pipeline. See `references/enrichment.md`.
 
-### 4. Translate
+### 5. Translate
 
 Build the field map first (`references/field-mapping.md` — ECS → `LogAttributes` patterns, required casts, and the expressions for fields Elastic derived at index time), then translate panel by panel.
 
@@ -157,13 +188,13 @@ Prefer `clickstack_table` and `clickstack_timeseries` over `clickstack_sql`: the
 
 **Filters live at two levels and a panel that looks unfiltered usually isn't.** The dashboard object carries its own filters, which apply to every panel. On the stock `[Logs Nginx] Overview`, three of seven panels carry no panel-level filter and inherit `data_stream.dataset: nginx.error, nginx.access` from the dashboard. Because that inherited filter is typically an OR over several datasets, you cannot paste it onto each tile — decide the scope per panel. `inventory-panels.py` prints dashboard-level filters in a header above the table so they stay visible.
 
-### 5. Create
+### 6. Create
 
 `clickstack_save_dashboard` with no `id` creates; then use `clickstack_patch_dashboard` for tile-by-tile fixes rather than resubmitting the whole object. Tag the result (e.g. `migrated-from-kibana`) so `clickstack_search_dashboards` can find the set later. Saved searches go through `clickstack_save_saved_search` with the mapped column list.
 
 Add one `markdown` tile per dashboard recording provenance: source dashboard id, migration date, and any panel that degraded. The dashboard should explain itself without this file.
 
-### 6. Verify — in four passes, and none of them is redundant
+### 7. Verify — in four passes, and none of them is redundant
 
 `clickstack_query_tiles` runs every tile in one call. Compare each against a number obtained from the **source platform**, not against expectation.
 
@@ -186,23 +217,23 @@ Two rules that decide whether the numeric pass means anything:
   sees it either. Run each time-series tile capped and uncapped and compare row counts.
 - **Compare totals and distributions, never a wall-clock window.** The two platforms are almost certainly not on the same clock, and a sub-second-precision difference in the source logs puts events on opposite sides of a bucket edge. Window-dependent comparisons produce failures that no query can fix. This has produced **two false bug reports** in the reference project — both times a static corpus seen through "Last 24 hours", where the count drifts every minute. When two UIs disagree, ask what range each is showing *before* querying anything.
 
-#### 6a. Audit every tile against its panel, structurally — before anything else
+#### 7a. Audit every tile against its panel, structurally — before anything else
 
 ```bash
 python3 "$SKILL"/scripts/audit-tiles.py source.ndjson migrated.json --field-map map.json
 ```
 
-Seven checks, each from a real failure and each mutation-tested: a **dropped dashboard control**, a **metric-source filter missing `sourceMetricType`** (which renders an empty dropdown), a **dropped metric** (the panel displays two values, the tile one), a **placeholder** left in stored SQL, **`seriesLimit`** on a line/stacked_bar, **chart type drift** from the panel's `seriesType`, and a **field-mapping mismatch**. That last one needs the step-4 field map, because a metric tile references an OTel metric name rather than the source field — no heuristic bridges `process.cpu.pct` to `system.process.cpu.utilization`, and the audit lists such pairings for review rather than guessing. Exit status gates the migration. Details and its limits: `references/verification.md`.
+Seven checks, each from a real failure and each mutation-tested: a **dropped dashboard control**, a **metric-source filter missing `sourceMetricType`** (which renders an empty dropdown), a **dropped metric** (the panel displays two values, the tile one), a **placeholder** left in stored SQL, **`seriesLimit`** on a line/stacked_bar, **chart type drift** from the panel's `seriesType`, and a **field-mapping mismatch**. That last one needs the step-5 field map, because a metric tile references an OTel metric name rather than the source field — no heuristic bridges `process.cpu.pct` to `system.process.cpu.utilization`, and the audit lists such pairings for review rather than guessing. Exit status gates the migration. Details and its limits: `references/verification.md`.
 
 This exists because a person comparing charts caught **ten** bugs on the reference migrations that a green suite did not, and most of them were wrong *structure*, which is mechanically checkable. It finds in a second what 6c finds in ten minutes.
 
-#### 6b. Then diff every series bucket for bucket
+#### 7b. Then diff every series bucket for bucket
 
 Totals are not enough, and neither is a spot check. Diff each series per bucket against the source, comparing the **key sets** as well as the values.
 
 This is the pass that catches a series which is the right shape and quietly wrong. In the reference project it found **8 wrong series across two migrations that had already passed their full suites and been eyeballed** — builder gauge tiles off by about 1% (3.63 against 3.67), which no chart and no whole-window average can show. Run the tile's **stored** `sqlTemplate` for `sql` tiles, and re-issue the tile's own `select`/`groupBy`/`where` through `clickstack_timeseries` for builder tiles; a hand-written "equivalent" re-encodes whatever misunderstanding produced the tile. Normalise the bucket keys first — Elastic renders `15:00` and ClickHouse `15:00:00`, and joining the raw strings gives an empty intersection that reads as "everything is broken". Full recipe in `references/verification.md`.
 
-#### 6c. Finally, open both dashboards side by side and compare them tile by tile
+#### 7c. Finally, open both dashboards side by side and compare them tile by tile
 
 **Do not skip this, and do not treat it as a formality.** On the reference migrations **six** tile bugs were caught by a person looking at charts — and the last three were found *after* bucket-for-bucket diffing was already green, which is the strongest argument there is for keeping this pass. `query_tiles` reported `status: ok` with a plausible row count for every one.
 
@@ -244,7 +275,7 @@ Mechanise what you can, so the visual pass is a backstop rather than the only de
 
 Details, including what residual disagreement is expected and what is a real bug: `references/verification.md`.
 
-### 7. Record what did not survive
+### 8. Record what did not survive
 
 Every migration has a residue. Write it down with the *reason*, classified:
 
@@ -276,7 +307,7 @@ When it happens, do not "fix" the target into agreeing. Assert the disagreement 
 |---|---|
 | `scripts/audit-tiles.py` | after creating tiles, before the visual pass — structural diff of every tile against its panel |
 | `references/sources.md` | mapping data views to sources; ad-hoc views, runtime fields, cross-cluster |
-| `references/integration-to-receiver.md` | **before planning a metrics migration** — per-integration Elastic → OTel receiver coverage: maps / reshaped / default-off / absent |
+| `references/integration-to-receiver.md` | **before planning a metrics migration** (and `scripts/plan-collector.py` automates it) — per-integration Elastic → OTel receiver coverage: maps / reshaped / default-off / absent |
 | `references/field-mapping.md` | translating any field; ECS → `LogAttributes`, casts, derived expressions |
 | `references/clickstack-tiles.md` | writing a tile; schema, `displayType` table, filter placement |
 | `references/kibana-export.md` | a panel type is unrecognized, or you need the export shape |
@@ -294,7 +325,7 @@ reliable; where it was reasoned, it may be wrong in your deployment.
 | Panel parsing (`inventory-panels.py`) | **Measured.** 347 real panels across the nginx, apache, system, mysql and kubernetes integrations — Lens (formBased + textBased), legacy `visState`, TSVB, timelion, maps, by-reference and by-value panels. Zero unclassified. Filter rendering was fixed 2026-09-17: a **`combined`** filter's `meta.relation` was being dropped, so an OR read as an AND — which inverts a panel's meaning and made one working stock panel look unmigratable |
 | Data-view resolution and `--sources` | **Measured** on the same 334 panels: all six reference shapes, including 43 ad-hoc data views, 12 with Painless runtime fields, and a cross-cluster pattern. The only panels left with no data view are the 40 prose panels, which correctly read nothing |
 | `--triage` | **Measured** on the same estate (37 dashboards, 347 panels): **128 ready / 216 decide / 3 blocked**. The heatmap rule was added 2026-09-17 after ClickStack's heatmap turned out to have no categorical axis — it had been calling two unmigratable panels "ready". It was 140/189/3 until the mysql migration showed the metric rules were too lenient — a panel doing `average()`/`max()` on a metric's *value* has no builder path whether the field is a Sum or a Gauge, and a `table` tile takes no row limit, so `terms(f) size=N` on a datatable needs SQL. 22 panels moved from ready to decide, which is the more honest split |
-| The visual pass (step 6c) | **Measured, by failing six times.** Six tile bugs passed a fully green numeric suite and were caught only by comparing charts — and the last three survived bucket-for-bucket diffing too, because they were shape errors whose every value was correct (a saved search collapsed to one row, four chart types hand-picked away from the source, and a panel whose field was constant). The protocol in `references/verification.md` is written from those six |
+| The visual pass (step 7c) | **Measured, by failing six times.** Six tile bugs passed a fully green numeric suite and were caught only by comparing charts — and the last three survived bucket-for-bucket diffing too, because they were shape errors whose every value was correct (a saved search collapsed to one row, four chart types hand-picked away from the source, and a panel whose field was constant). The protocol in `references/verification.md` is written from those six |
 | **Bucket-for-bucket diffing** | **Measured, and it found what the visual pass could not.** The mysql migration diffed all 42 tile series against Elasticsearch per bucket, and the same method then exposed **8 wrong series in two earlier migrations that had passed 22/22 and looked right on screen** — gauge tiles off by 3.63 vs 3.67. Totals, whole-window averages and charts all miss this. Diff buckets |
 | Tile schema, `displayType` vocabulary, filter placement, `aggFn`, `quantile` levels | **Measured**, read off a live `save_dashboard` schema — but on **ClickStack 2.35.0-beta only**. Re-run `introspect-clickstack.py`; it exists for exactly this |
 | The `seriesLimit` trap, the `where`→`aggCondition` read-back mismatch, the `whereLanguage` default | **Measured**, each by isolating the one key that caused it |
@@ -314,5 +345,5 @@ Two consequences worth acting on:
   way to catch a tile that queries successfully and renders nothing.
 - **Do not present a rendered tile as verified, and do not present a green check suite as
   verified either.** Step 6 exists because every wrong tile in the reference migrations
-  rendered perfectly; **step 6c exists because six of them also passed every numeric check
+  rendered perfectly; **step 7c exists because six of them also passed every numeric check
   I had written, three of those even after per-bucket diffing.** Both passes, every time.

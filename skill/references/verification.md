@@ -142,7 +142,7 @@ SKILL=~/.claude/skills/kibana-to-clickstack
 # ...or run it straight out of a clone of this repo:
 SKILL=./skill
 python3 "$SKILL"/scripts/audit-tiles.py source-dashboards.ndjson migrated.json \
-    --field-map field-map.json          # the step-4 mapping; see below
+    --field-map field-map.json          # the step-5 mapping; see below
 ```
 
 `migrated.json` is whatever `clickstack_get_dashboard` returns. Exit status is 1 if anything
@@ -165,7 +165,7 @@ fire, with an unmodified control that must stay silent:
 A metric tile references an **OTel metric name**, not the source field name — renaming is the
 point of the migration. So no string heuristic can bridge `process.cpu.pct` to
 `system.process.cpu.utilization`, and the audit will not guess. Give it the mapping you built
-in step 4:
+in step 5:
 
 ```json
 {"process.cpu.pct": "system.process.cpu.pct",

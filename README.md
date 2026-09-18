@@ -66,7 +66,7 @@ worthless:
 - **The losses.** A map panel has no target chart type; a categorical heatmap has no target
   at all. Which degraded form is acceptable — a country bar, a table, nothing — is a product
   decision, so the skill surfaces the list and waits rather than picking for you.
-- **The value verification (steps 6b/6c).** Diffing tiles against Elasticsearch needs the
+- **The value verification (the diff passes).** Diffing tiles against Elasticsearch needs the
   *Elasticsearch* side written by hand, one file per integration. That is the whole point: an
   expectation derived from the tile agrees with the tile whatever it says. `verify/expect_*.py`
   are five worked examples to copy — `expect_nginx.py` is the smallest and between them they
@@ -155,12 +155,34 @@ value* inside `attributes.panelsJSON` (a JSON **string**), and for Lens panels t
 want is `sourceField` inside `datasourceStates.formBased.layers.*.columns`. The script
 handles those plus legacy `visState` aggs, TSVB, maps and saved searches.
 
-### 2. Inventory the target before writing a single query
+### 2. Derive the collector config from the panels you are keeping
 
-If ingestion is moving to the OTel collector, **the receiver decides your field names**, and it
-reshapes rather than renames. Start from
-[`skill/references/integration-to-receiver.md`](skill/references/integration-to-receiver.md) —
-per-integration verdicts: maps, reshaped, default-off, or absent.
+Only if ingestion is moving to the OTel collector — which is the usual path. Do it **before**
+inventorying the target, because until the collector is configured there is nothing in the
+target to inventory. Skipping it is how a migration finds out mid-flight that a panel has no
+data.
+
+```bash
+python3 skill/scripts/inventory-panels.py dashboards.ndjson --fields > fields.txt
+python3 skill/scripts/plan-collector.py fields.txt          # the plan
+python3 skill/scripts/plan-collector.py fields.txt --yaml    # just the receivers: block
+```
+
+Every field the panels depend on gets a verdict — **default** (nothing to do), **optional**
+(exists but off by default, the commonest case), **reshaped** (several fields collapse into one
+metric plus a dimension, so the panel is a rewrite), **absent** (needs another receiver),
+**derive** (compute it in the tile), or **dimension** (it becomes an attribute).
+
+The trap worth knowing before you plan: **every hostmetrics `*.utilization` metric is optional
+and the default is the absolute counter.** Elastic hands you percentages; OTel makes
+percentages opt-in.
+
+Background and caveats:
+[`skill/references/integration-to-receiver.md`](skill/references/integration-to-receiver.md).
+Five worked configs written against this plan:
+`reference-stack/ingest/clickstack/otel-collector-*.yaml`.
+
+### 3. Inventory the target before writing a single query
 
 ```bash
 python3 skill/scripts/introspect-clickstack.py --sources
@@ -170,19 +192,19 @@ With a `Map` schema this is the only way to learn which keys exist, and it surfa
 materialized columns (`geo_*`, `ua_*`) as real top-level columns — which decides whether a
 builder tile can reach them or you need SQL.
 
-### 3. Settle the losses with stakeholders *now*
+### 4. Settle the losses with stakeholders *now*
 
 See [What does not survive](#what-does-not-survive). Saying it at the start is a design
 decision; saying it when you reach the panel is an excuse.
 
-### 4. Translate, then create
+### 5. Translate, then create
 
 `skill/references/field-mapping.md` for ECS → `LogAttributes` patterns and the expressions
 for fields Elastic derived at index time; `skill/references/clickstack-tiles.md` for the tile
 schema and the trap that silently doubles every number (**builder tiles have no tile-level
 `where`** — the filter goes on each `select` item).
 
-### 5. Verify — a tile that renders is not a tile that is correct
+### 6. Verify — a tile that renders is not a tile that is correct
 
 This is the part this repo exists for. Four passes, in increasing cost:
 
@@ -201,15 +223,15 @@ python3 verify/verify-tiles-vs-elastic.py
 # 6d. a human opens the two dashboards side by side
 ```
 
-**6b and 6c need one file each pointed at your dashboards.** That is the only hand-written
+**The two diff passes need one file each pointed at your dashboards.** That is the only hand-written
 part, and it is deliberate: an expectation derived automatically from the tile would agree
-with the tile whatever it says. For 6c copy `verify/expect_nginx.py` — it is the smallest of
+with the tile whatever it says. For the value diff copy `verify/expect_nginx.py` — it is the smallest of
 the four and covers every tile shape between them (`wide`, `long`, `scalar`, `terms`,
 `builder`, `grouped`); you write the Elasticsearch side, `verify/tilediff.py` does the rest.
-For 6b, edit `SPEC` and `EXTRA` at the top of `verify/verify-controls.py`. Run either with
+For the control diff, edit `SPEC` and `EXTRA` at the top of `verify/verify-controls.py`. Run either with
 `--list` / `--mutate` to see the shape and to confirm the checks can fail.
 
-### 6. Record the residue
+### 7. Record the residue
 
 Every migration has one. Write it down **with the reason, classified** — rendering-layer gap,
 enrichment absent, third-party dataset differs, source precision differs. Classifying it is
@@ -357,7 +379,7 @@ skill/            the migration procedure and its scripts — generic, no datase
   references/       integration→receiver coverage, field mapping, tile schema, Kibana
                     export shapes, enrichment, verification
   scripts/          export-dashboards.sh, inventory-panels.py, introspect-clickstack.py,
-                    audit-tiles.py
+                    audit-tiles.py, plan-collector.py (+ receiver-map.json)
 verify/           the verification harness — environment-driven, points anywhere
   conf.py           every endpoint and credential, from the environment
   tilediff.py       the bucket-for-bucket machinery

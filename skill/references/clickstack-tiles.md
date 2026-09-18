@@ -9,7 +9,7 @@ CLICKSTACK_PERSONAL_API_KEY=... python3 scripts/introspect-clickstack.py
 python3 scripts/introspect-clickstack.py --url https://<host>/api/mcp --key <personal-key>
 ```
 
-A new chart type appearing (a map, above all) would change step 3 of the procedure.
+A new chart type appearing (a map, above all) would change step 4 of the procedure.
 
 ## Chart type vocabulary
 
@@ -68,7 +68,7 @@ the y-axis is value buckets.
 A Kibana heatmap that puts `terms(<field>)` on an axis therefore has no target. Measured on
 `[Metrics System] Overview`, whose two panels are `terms(host.name)` x date_histogram x
 `average(...)`: both degrade to a **line chart grouped by that field** — same data, different
-rendering. Declare it in step 3 alongside maps.
+rendering. Declare it in step 4 alongside maps.
 
 > The trap is that the displayType *name* matches, so a naive mapping table calls these
 > "ready". `inventory-panels.py --triage` now flags any heatmap carrying a `terms()`
@@ -185,7 +185,7 @@ whole distribution instead of the source's `terms size=N`.
 
 > `query_tiles` cannot catch this. It reported `status: ok` and `hasData: true` for the broken
 > tile at every time range, because the query did return rows — just rows of the wrong series.
-> This is the canonical example of the class **step 6b** exists for: compare the rendered
+> This is the canonical example of the class **step 7b** exists for: compare the rendered
 > charts, not only the numbers. See `verification.md`, "The visual pass".
 
 Prototyping with `clickstack_table` will not reproduce it either: the table tool pushes a
@@ -447,7 +447,7 @@ named the same thing on both platforms.
 ## Two Kibana shapes that flatten, and are worth declaring
 
 Both are degradations rather than losses — the data survives, the structure does not — but
-they change what the panel *says*, so declare them in step 3 alongside the map:
+they change what the panel *says*, so declare them in step 4 alongside the map:
 
 - **A multi-ring donut becomes a flat pie.** Kibana nests `terms` buckets into concentric
   rings (e.g. `user_agent.name` outside, `user_agent.version` inside). ClickStack's `groupBy`
