@@ -114,6 +114,8 @@ Then inventory the target's keys and diff them, rather than assuming the mapping
 SELECT arrayJoin(mapKeys(LogAttributes)) AS k, count() FROM otel_logs GROUP BY k ORDER BY 2 DESC
 ```
 
+**If the target is fed by the OTel collector, your field names are the RECEIVER's** — and a receiver reshapes rather than renames: six `system.cpu.*.norm.pct` fields become one `system.cpu.utilization` with a `state` attribute, and that metric is *optional* (the default is cumulative `system.cpu.time`). Some panels have no target on the standard receiver and need a different one. Read `references/integration-to-receiver.md` before planning, and the receiver's own `metadata.yaml` before declaring anything absent — in this project that claim has been wrong more often than right.
+
 `clickstack_describe_source` is the other half: with a `Map` schema it is the only way to learn which keys exist, and it surfaces materialized columns (e.g. `geo_*`, `ua_*`) as real top-level columns — so the builder tools can reach them and you do not need a `clickstack_sql` fallback.
 
 **Then triage, and pick what to migrate first:**
@@ -274,6 +276,7 @@ When it happens, do not "fix" the target into agreeing. Assert the disagreement 
 |---|---|
 | `scripts/audit-tiles.py` | after creating tiles, before the visual pass — structural diff of every tile against its panel |
 | `references/sources.md` | mapping data views to sources; ad-hoc views, runtime fields, cross-cluster |
+| `references/integration-to-receiver.md` | **before planning a metrics migration** — per-integration Elastic → OTel receiver coverage: maps / reshaped / default-off / absent |
 | `references/field-mapping.md` | translating any field; ECS → `LogAttributes`, casts, derived expressions |
 | `references/clickstack-tiles.md` | writing a tile; schema, `displayType` table, filter placement |
 | `references/kibana-export.md` | a panel type is unrecognized, or you need the export shape |

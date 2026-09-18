@@ -346,11 +346,34 @@ different problems; postgres's nine are two.
 Four things it added to the record:
 
 - **A third realistic target shape for metric names.** apache emits the standard
-  apachereceiver's model; postgres does not, because the OTel `postgresqlreceiver` does not
-  model pg_stat_statements at all and covers pg_stat_database only partially. A customer
-  shipping these today most likely uses the generic `sqlqueryreceiver`, whose metric names are
-  **whatever the operator's SELECT aliased the columns to** — so the mapping here is
-  near-identity, and that is realistic rather than lazy.
+  apachereceiver's model; postgres does not, because `postgresqlreceiver` has **no
+  per-statement metrics at all**. A customer shipping those numbers uses the generic
+  `sqlqueryreceiver`, whose metric names are **whatever the operator's SELECT aliased the
+  columns to** — so the mapping here is near-identity, and that is realistic rather than lazy.
+
+  **Verified 2026-09-18, and one claim corrected.** `sqlqueryreceiver` does emit metrics from
+  arbitrary SQL — `value_column` for the value, `attribute_columns` for the dimensions, with
+  `data_type`, `monotonic` and `aggregation` all settable — and supports postgres and mysql.
+  So the modelling choice above stands. But this section also used to say the receiver "covers
+  pg_stat_database only partially", implying most of the dashboard had no target. That
+  overstates it: `postgresql.tup_{fetched,returned,inserted,updated,deleted}` exist as optional
+  per-database metrics, as do `postgresql.commits`, `postgresql.rollbacks`,
+  `postgresql.deadlocks` and `postgresql.query.conflicts`. The real per-tile verdict, for the
+  nine data tiles:
+
+  | tiles | verdict |
+  |---:|---|
+  | 4 | map onto `postgresqlreceiver` cleanly — Database Transactions, Rows Fetched/Returned, Rows Inserted/Deleted/Updated, Conflict/Deadlock Rates |
+  | 2 | **degrade** — Local and Shared block cache stats become per-database (`postgresql.blks_hit`/`blks_read`), losing the per-query dimension |
+  | 3 | need `sqlqueryreceiver` — Top Queries, Query Latency, Fileblock IO (nothing exposes `blk_read_time`/`blk_write_time`) |
+
+  The metric names here were **deliberately not renamed** to receiver names. They are a
+  faithful `sqlqueryreceiver` shape and that receiver has no canonical names to rename *to*.
+  What was missing was stating the model where a reader would see it, plus two cautions:
+  `sqlqueryreceiver` metrics are **alpha**, so "achievable" is not "production-ready"; and in a
+  real config alias the database column to **`db.namespace`** rather than `database`, so one
+  dashboard control can filter both this family and any `postgresqlreceiver` metrics. Full
+  per-integration table: `../skill/references/integration-to-receiver.md`.
 - **`seriesType: bar` on an `lnsXY` with a date_histogram is a *time-series* bar.** It maps to
   ClickStack `stacked_bar`; `bar` is categorical and the tile fails schema validation for want
   of a `groupBy`. Only `bar_horizontal` means a categorical bar. This was a genuine bug in

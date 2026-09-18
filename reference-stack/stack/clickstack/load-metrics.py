@@ -294,17 +294,31 @@ def flush(key, pending, per_node):
 # A DIFFERENT modelling choice from apache, and deliberately so.
 #
 # For apache this loader emits the standard apachereceiver's metric names, because that is
-# what a customer scraping apache into ClickStack would have. Postgres is not like that: the
-# OTel `postgresqlreceiver` does not model pg_stat_statements at all, and covers
-# pg_stat_database only partially (`postgresql.operations`, `postgresql.rows` and friends do
-# not include rows.fetched/returned). Mapping onto it would leave most of this dashboard with
-# no target -- a finding already demonstrated by apache, and not worth demonstrating twice.
+# what a customer scraping apache into ClickStack would have. Postgres is not like that:
+# `postgresqlreceiver` has NO per-statement metrics at all, so the pg_stat_statements half of
+# this dashboard -- top queries, per-query latency, per-query block cache -- has no target on
+# it. A customer shipping those numbers uses the collector's generic `sqlqueryreceiver`, which
+# emits whatever the operator's SELECT aliased its columns to. So the realistic shape here is
+# **the target's metric names are the source's column names**, which is why the postgres field
+# mapping is near-identity while apache's was a reshape.
 #
-# A customer shipping these numbers today most likely uses the collector's generic
-# `sqlqueryreceiver`, which emits whatever the operator's SELECT aliased the columns to. So
-# the realistic third shape is: **the target's metric names are the source's column names**.
-# That is what this emits, and it is the reason the postgres field mapping is near-identity
-# while apache's was a reshape.
+# CORRECTED 2026-09-18 after reading postgresqlreceiver's own metadata. This comment used to
+# add that the receiver "covers pg_stat_database only partially (`postgresql.operations`,
+# `postgresql.rows` and friends do not include rows.fetched/returned)" and that mapping onto
+# it "would leave most of this dashboard with no target". Both overstate it:
+# `postgresql.tup_{fetched,returned,inserted,updated,deleted}` exist as optional metrics per
+# database (attribute `db.namespace`), as do `postgresql.commits`, `postgresql.rollbacks`,
+# `postgresql.deadlocks` and `postgresql.query.conflicts`. Of the nine data tiles on the
+# migrated dashboard, four map onto the receiver cleanly, two survive only by losing their
+# per-query dimension, and three need `sqlqueryreceiver`. The per-tile verdicts are in
+# ../../../skill/references/integration-to-receiver.md.
+#
+# The names below are NOT renamed to receiver names, deliberately: they are a faithful
+# `sqlqueryreceiver` shape, and that receiver's metric names are the operator's to choose.
+# What was missing was saying so where a customer would see it -- now done in INTEGRATIONS.md
+# and the matrix above. One piece of advice that belongs with it: in a real config, alias the
+# database column to `db.namespace` rather than `database`, so a dashboard control can filter
+# both this family and any postgresqlreceiver metrics with one expression.
 PG_DB_SUMS = (("rows_fetched", "postgresql.database.rows.fetched"),
               ("rows_returned", "postgresql.database.rows.returned"),
               ("rows_inserted", "postgresql.database.rows.inserted"),

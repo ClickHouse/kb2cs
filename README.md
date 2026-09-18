@@ -157,6 +157,11 @@ handles those plus legacy `visState` aggs, TSVB, maps and saved searches.
 
 ### 2. Inventory the target before writing a single query
 
+If ingestion is moving to the OTel collector, **the receiver decides your field names**, and it
+reshapes rather than renames. Start from
+[`skill/references/integration-to-receiver.md`](skill/references/integration-to-receiver.md) —
+per-integration verdicts: maps, reshaped, default-off, or absent.
+
 ```bash
 python3 skill/scripts/introspect-clickstack.py --sources
 ```
@@ -349,7 +354,8 @@ them.
 ```
 skill/            the migration procedure and its scripts — generic, no dataset assumptions
   SKILL.md          the seven-step procedure
-  references/       field mapping, tile schema, Kibana export shapes, enrichment, verification
+  references/       integration→receiver coverage, field mapping, tile schema, Kibana
+                    export shapes, enrichment, verification
   scripts/          export-dashboards.sh, inventory-panels.py, introspect-clickstack.py,
                     audit-tiles.py
 verify/           the verification harness — environment-driven, points anywhere
