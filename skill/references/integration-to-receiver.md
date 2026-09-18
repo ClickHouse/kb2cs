@@ -20,9 +20,11 @@ Three things this answers that a name-level mapping table cannot:
 
 ## Status of this document
 
-Every row below was read off the receiver's documentation or `metadata.yaml` on **2026-09-18**.
-Rows are marked **[v]** verified or **[?]** not yet checked. Receivers move; re-read rather
-than trust this.
+Every row below was read off the receiver's documentation or `metadata.yaml` on
+**2026-09-18**, and as of that date **every row is verified** — the `[v]` markers say which
+receiver was read. Keep the `[?]` convention for anything added later without checking, and
+prefer re-reading to trusting this: receivers move, and one of them has a rename already
+behind a feature gate.
 
 ---
 
@@ -100,16 +102,37 @@ Transactions, Rows Fetched/Returned, Rows Inserted/Deleted/Updated, Conflict/Dea
 **2 degrade** to per-database (Local and Shared block cache stats), **3 need
 `sqlqueryreceiver`** (Top Queries, Query Latency, Fileblock IO).
 
-## system — `hostmetricsreceiver` **[v for cpu and process, ? for the rest]**
+## system — `hostmetricsreceiver` **[v]**
 
-| Elastic | receiver | note |
-|---|---|---|
-| `system.cpu.{user,system,nice,irq,softirq,iowait}.norm.pct` | `system.cpu.utilization` + `cpu` + `state` | **6 → 1**, and **optional** — the default is `system.cpu.time` (cumulative **seconds**), so reproducing a percentage panel from a default config means a rate ÷ core count |
-| — | state values | `idle, interrupt, nice, softirq, steal, system, user, wait` — note **`interrupt`** not `irq` and **`wait`** not `iowait` |
-| `process.cpu.pct` | `process.cpu.utilization` (V0, **not** normalised) | optional |
-| `system.process.cpu.total.norm.pct` | `process.cpu.utilization@v1` (**normalised by CPU count**, attribute `cpu.mode`) | optional — **the two differ by core count; picking the wrong one is a 4–16× error** |
-| process identity | resource attrs `process.pid`, `process.executable.name`, `process.executable.path`, `process.command`, `process.owner` | |
-| `system.{memory,load,network,diskio,filesystem}.*` | **[?] not yet checked** — each hostmetrics scraper has its own `documentation.md` | |
+Each scraper documents itself separately (`internal/scraper/<name>scraper/documentation.md`);
+the rows below were read from the cpu, memory, load, network, disk, filesystem, process and
+paging scrapers — all eight.
+
+| Elastic | receiver | default? | shape |
+|---|---|---|---|
+| `system.cpu.{user,system,nice,irq,softirq,iowait}.norm.pct` | `system.cpu.utilization` + `cpu` + `state` | **optional** | **6 → 1.** Default is `system.cpu.time` (cumulative **seconds**) |
+| — | its `state` values | | `idle, interrupt, nice, softirq, steal, system, user, wait` — **`interrupt`** not `irq`, **`wait`** not `iowait` |
+| `system.load.{1,5,15}` | `system.cpu.load_average.{1m,5m,15m}` | default | renamed and re-parented |
+| `system.memory.{used.bytes,free,...}` | `system.memory.usage` + `state` | default | **n → 1.** States: `buffered, cached, inactive, free, slab_reclaimable, slab_unreclaimable, used` — there is **no `actual_used`**; Elastic's "actual" (excluding buffers/cache) has to be reconstructed from the state breakdown |
+| `system.memory.actual.used.pct` | `system.memory.utilization` + `state` | **optional** | carries `state`, so a single percentage needs picking a state |
+| `system.network.{in,out}.bytes` | `system.network.io` + `device` + `direction` | default | **2 → 1**; direction is `receive`/`transmit` |
+| `system.network.{in,out}.packets` | `system.network.packets` + `device` + `direction` | default | **2 → 1** |
+| `system.network.{in,out}.dropped` | `system.network.dropped` + `device` + `direction` | default | **2 → 1** |
+| `system.diskio.{read,write}.bytes` | `system.disk.io` + `device` + `direction` | default | **2 → 1**; direction is `read`/`write` |
+| `system.filesystem.used.bytes` | `system.filesystem.usage` + `device` + `mode` + `mountpoint` + `type` + `state` | default | states `free, reserved, used` |
+| `system.filesystem.used.pct` | `system.filesystem.utilization` (**no** `state`) | **optional** | |
+| `process.cpu.pct` | `process.cpu.utilization` — **V0, not normalised** | optional | note: **no `system.` prefix** |
+| `system.process.cpu.total.norm.pct` | `process.cpu.utilization@v1` — **normalised by CPU count**, attribute `cpu.mode` | optional | **the two differ by core count: a 4–16× error** |
+| process identity | **resource** attributes `process.pid`, `process.executable.name`, `process.executable.path`, `process.command`, `process.owner` | | not data-point attributes |
+| `system.memory.swap.*` / swap usage | `system.paging.usage` + `device` + `state`(cached/free/used) | default | `system.paging.utilization` is **optional**, same pattern |
+
+> **Every `*.utilization` metric is optional; the default is the absolute counter.**
+> `system.cpu.utilization`, `system.memory.utilization` and `system.filesystem.utilization` are
+> all off by default — as is `system.paging.utilization` — while `system.cpu.time`,
+> `system.memory.usage`, `system.filesystem.usage` and `system.paging.usage` are on. Elastic hands you percentages; OTel hands you absolutes and
+> makes the percentages opt-in. **Any dashboard built on Elastic's `*.pct` fields needs either
+> a collector config change or a rate/ratio computed in the tile** — and that is a planning
+> decision, not a translation detail.
 
 ## The escape hatch — `sqlqueryreceiver` **[v]**
 
@@ -126,6 +149,32 @@ target has *no canonical names to map to*. Two consequences: the mapping becomes
 (the target's names are the source's column names), and the naming is a decision you own.
 **Alias your database column to `db.namespace`**, not `database`, so one dashboard control can
 filter both these metrics and any `postgresqlreceiver` ones.
+
+## Where this repo's reference stack deviates
+
+The reference stack's loader stands in for a receiver. For nginx and apache it reproduces the
+receiver's model closely; elsewhere it does not, and the gaps are listed here rather than left
+for someone to discover by copying a tile.
+
+| integration | deviation | why it matters |
+|---|---|---|
+| **apache** | attribute key `state` where the receiver uses `scoreboard_state` / `workers_state` | a tile copied from here filters on the wrong key. The newer `apache.connections.async` uses the correct `connection_state`, so apache currently carries **two conventions** |
+| **mysql** | `mysql.open_resources` → receiver is `mysql.opened_resources` (and is *cumulative opened*, not a current gauge — `mysql.table.open` is the gauge) | wrong name **and** wrong semantics |
+| **mysql** | `mysql.traffic` + `direction` → receiver is `mysql.client.network.io` + `kind` | name and attribute both differ |
+| **mysql** | `mysql.questions` → receiver is `mysql.query.count` | renamed |
+| **mysql** | `mysql.buffer_pool.{read_requests,reads}` → receiver reshapes to `mysql.buffer_pool.operations` + `operation` | two metrics become one + a dimension |
+| **mysql** | `mysql.ssl_cache`, `mysql.aborted`, `mysql.replica.log_position.*` | no receiver equivalent → `sqlqueryreceiver` |
+| **system** | `system.process.*` → receiver emits `process.*` (**no `system.` prefix**) | wrong namespace |
+| **system** | `system.process.cpu.pct` | not a receiver metric; see the V0/V1 normalisation trap above |
+| **system** | `process.name` as a data-point attribute → receiver uses **resource** attribute `process.executable.name` | different key *and* different location |
+| **system** | `state` values `irq` / `iowait` → receiver uses `interrupt` / `wait` | a tile filtering `state='iowait'` returns nothing |
+| **system** | `state: actual_used` on `system.memory.usage` | not in the receiver's state vocabulary |
+| **postgresql** | metric names are the source's column names | **deliberate, not a defect** — this models `sqlqueryreceiver`, whose names the operator chooses. See that section |
+
+Nothing above affects the migration's *correctness against Elasticsearch* — the tiles and the
+expectations agree, and 203 tile series are diffed bucket-for-bucket. It affects **portability**:
+a customer's collector will not emit these names, so the value of this repo's postgres, mysql
+and system tile SQL is the *technique*, not the identifiers.
 
 ## What this file corrects
 

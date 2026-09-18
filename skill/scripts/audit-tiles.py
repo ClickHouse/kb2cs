@@ -243,8 +243,22 @@ def norm_title_unannotated(s):
     this is used ONLY after an exact match fails, ONLY on the tile's side, and ONLY when it
     resolves to exactly one source panel. Ambiguity means no match, which is the honest
     answer.
+
+    The same guard makes the bracketed form safe. `[Metrics Apache]`-style suffixes are a
+    Kibana titling convention rather than a distinction, but the rule does not need to know
+    that: if stripping ever collapses two panels together, the match is refused.
     """
-    return norm_title(re.sub(r"\s*\([^()]*\)\s*$", "", (s or "").strip()))
+    t = (s or "").strip()
+    # Strip a trailing parenthetical AND/OR a trailing bracketed suffix, repeatedly: stock
+    # Kibana panels are routinely titled `Total connections [Metrics Apache]`, and a migrated
+    # tile drops that suffix, so an exact comparison never pairs them. Several apache and
+    # system tiles were unmatched for that reason alone.
+    for _ in range(3):
+        stripped = re.sub(r"\s*(\([^()]*\)|\[[^\[\]]*\])\s*$", "", t)
+        if stripped == t:
+            break
+        t = stripped
+    return norm_title(t)
 
 
 def main(argv):
@@ -321,6 +335,33 @@ def main(argv):
                 print("       - metric-source filter %r has no sourceMetricType, so its "
                       "dropdown cannot populate" % f.get("expression"))
 
+        # Assign panels to tiles UP FRONT, one panel per tile, exact titles first.
+        #
+        # Two tiles can strip to the same key -- `SSH login attempts` and `SSH login attempts
+        # (search)` -- and one is the migration of the panel while the other is an ADDED
+        # raw-rows view. Matching them independently let both claim the panel, and the search
+        # tile was then flagged "panel seriesType=bar_stacked but tile is search", comparing a
+        # stacked bar panel against a tile that was never meant to be it.
+        #
+        # Greedy in two passes so the result does not depend on tile order.
+        own_panels = [(t, a) for t, a in panels_by_dash.get(src_title, []) if t]
+        title_match, claimed = {}, set()
+        for tl in tiles:
+            nm = tl.get("name") or ""
+            hit = next((i for i, (pt, _a) in enumerate(own_panels)
+                        if i not in claimed and norm_title(pt) == norm_title(nm)), None)
+            if hit is not None:
+                title_match[nm], _ = own_panels[hit], claimed.add(hit)
+        for tl in tiles:
+            nm = tl.get("name") or ""
+            if nm in title_match:
+                continue
+            key = norm_title_unannotated(nm)
+            cands = [i for i, (pt, _a) in enumerate(own_panels)
+                     if i not in claimed and norm_title_unannotated(pt) == key]
+            if len(cands) == 1:
+                title_match[nm], _ = own_panels[cands[0]], claimed.add(cands[0])
+
         for tile in tiles:
             cfg = tile.get("config") or {}
             if cfg.get("displayType") == "markdown":
@@ -334,17 +375,20 @@ def main(argv):
             # fallback scores each panel by how many of its fields the tile mentions (either
             # normalisation variant), which is the same evidence a human uses.
             match, inferred = None, False
-            for _dt, ptitle, att in all_panels:
-                if ptitle and norm_title(ptitle) == norm_title(name):
-                    match = (ptitle, att)
-                    break
-            if match is None:
-                # Guarded fallback: the tile carries an annotation the panel does not. Only
-                # accepted when it is UNAMBIGUOUS -- see norm_title_unannotated.
-                cands = [(ptitle, att) for _dt, ptitle, att in all_panels
-                         if ptitle and norm_title(ptitle) == norm_title_unannotated(name)]
-                if len(cands) == 1:
-                    match = cands[0]
+            # SAME-DASHBOARD FIRST. `all_panels` spans the whole estate, and dashboard titles
+            # repeat across integrations -- `Connections` exists on both [Metrics MySQL]
+            # Database Overview and [Metrics Apache] Overview. Matching estate-wide paired an
+            # apache tile to the mysql panel and then flagged a chart-type difference that was
+            # really a mispairing. A tile's panel is almost always on its own source dashboard,
+            # so look there first and only widen if it is absent.
+            # Same-dashboard assignment computed above. Estate-wide title matching is
+            # deliberately NOT attempted: panel titles repeat across integrations, and doing
+            # so paired an apache `Connections` tile to the mysql panel of that name and a
+            # system Overview `CPU Usage` tile to the Host overview panel -- then reported the
+            # differences as findings. Both were mispairings dressed as defects. If a tile's
+            # panel is not on its own dashboard by title, the scored field-overlap inference
+            # below is the safe fallback, and it is already barred from driving comparisons.
+            match = title_match.get(name)
             if match is None:
                 scored = []
                 for _dt, ptitle, att in all_panels:

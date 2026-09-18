@@ -301,7 +301,16 @@ Four findings, on top of what nginx metrics established:
   `apache.scoreboard` and `apache.workers`. The new `apache.connections.async` uses the
   correct `connection_state` rather than propagating the deviation, so the apache metrics
   currently carry two conventions. Fixing the other two means rewriting their tiles and their
-  22 + 2 expectations; recorded here rather than done quietly.
+  22 + 2 expectations; recorded rather than done quietly.
+
+  **Every such deviation across all five integrations is now listed in one place** —
+  `../skill/references/integration-to-receiver.md`, "Where this repo's reference stack
+  deviates". mysql and system have their own entries there (`mysql.opened_resources`,
+  `system.process.*` → `process.*`, `state` values `irq`/`iowait` → `interrupt`/`wait`, and
+  others). None of them affects correctness against Elasticsearch — the tiles and the
+  expectations agree, and 203 series are diffed bucket-for-bucket. They affect
+  **portability**: a customer's collector will not emit these identifiers, so what transfers
+  from the postgres, mysql and system tile SQL is the technique, not the names.
 
 - **The reshape lost nothing.** Elastic spreads mod_status across one field per dimension
   value; OTel carries the dimension as an attribute. Eleven `scoreboard.*` fields became one
