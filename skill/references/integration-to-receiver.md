@@ -27,7 +27,7 @@ field so `plan-collector.py` can act on them:
 |---|---|
 | **default** | the receiver emits it with a default config — nothing to configure |
 | **optional** | the receiver has it but it is OFF by default — enable it explicitly |
-| **check** | a near equivalent exists but the semantics or the attribute value were not confirmed |
+| **check** | a near equivalent exists but the semantics or the attribute value were not confirmed. **Currently empty** — all seven were resolved, five by reading a `metadata.yaml` and two by measurement (below) |
 | **absent** | no equivalent on this receiver — see its alternative |
 | **derive** | no metric needed; compute it in the tile |
 | **dimension** | not a metric at all; it becomes an attribute |
@@ -131,7 +131,9 @@ paging scrapers — all eight.
 | `system.cpu.{user,system,nice,irq,softirq,iowait}.norm.pct` | `system.cpu.utilization` + `cpu` + `state` | **optional** | **6 → 1.** Default is `system.cpu.time` (cumulative **seconds**) |
 | — | its `state` values | | `idle, interrupt, nice, softirq, steal, system, user, wait` — **`interrupt`** not `irq`, **`wait`** not `iowait` |
 | `system.load.{1,5,15}` | `system.cpu.load_average.{1m,5m,15m}` | default | renamed and re-parented |
-| `system.memory.{used.bytes,free,...}` | `system.memory.usage` + `state` | default | **n → 1.** States: `buffered, cached, inactive, free, slab_reclaimable, slab_unreclaimable, used` — there is **no `actual_used`**. `buffered`, `cached` and `used` are tracked separately, so Elastic's `used.bytes` ≈ `used+buffered+cached` and its `actual.used` ≈ `used` alone. **The receiver's metadata does not define what `used` includes**, so confirm against a host; the docs also flag `system.linux.memory.available` as more accurate than `state=free` |
+| `system.memory.free` | `system.memory.usage` + `state=free` | default | **n → 1.** States: `buffered, cached, inactive, free, slab_reclaimable, slab_unreclaimable, used` |
+| `system.memory.actual.used.bytes` | `system.memory.usage` + `state=used` | default | **measured, not inferred** — the receiver's `used` excludes buffers and cache, exactly like Elastic's *actual* used |
+| `system.memory.used.bytes` | **derive** | | Elastic's `used.bytes` is `MemTotal − MemFree`, so it *includes* buffers and cache and matches no single state. Use `system.memory.limit − system.memory.usage{state=free}` (enable `limit`). **Do not** use `used+buffered+cached`: the receiver's `cached` includes `SReclaimable`, so that sum overshoots by roughly that much |
 | `system.memory.actual.used.pct` | `system.memory.utilization` + `state` | **optional** | carries `state`, so a single percentage needs picking a state |
 | `system.memory.total` | `system.memory.limit` | **optional** | |
 | `system.network.{in,out}.bytes` | `system.network.io` + `device` + `direction` | default | **2 → 1**; direction is `receive`/`transmit` |
@@ -144,6 +146,20 @@ paging scrapers — all eight.
 | `system.process.cpu.total.norm.pct` | `process.cpu.utilization@v1` — **normalised by CPU count**, attribute `cpu.mode` | optional | **the two differ by core count: a 4–16× error** |
 | process identity | **resource** attributes `process.pid`, `process.executable.name`, `process.executable.path`, `process.command`, `process.owner` | | not data-point attributes |
 | `system.memory.swap.*` / swap usage | `system.paging.usage` + `device` + `state`(cached/free/used) | default | `system.paging.utilization` is **optional**, same pattern |
+
+> **The memory states, measured rather than assumed.** The receiver's metadata does not define
+> what `used` includes, so this was settled by running `hostmetricsreceiver` 0.142.0 and reading
+> `/proc/meminfo` in the same second, seven matched pairs:
+>
+> | receiver state | equals |
+> |---|---|
+> | `free` | `MemFree` exactly |
+> | `buffered` | `Buffers` exactly |
+> | `cached` | `Cached + SReclaimable` **exactly** |
+> | `used` | 5.69 GB where `MemTotal − MemFree` was 8.07 GB — so it **excludes** buffers and cache (`MemTotal − MemFree − Buffers − Cached` matched to within 0.25%) |
+>
+> That is why `actual.used` maps straight onto `state=used`, and why `used.bytes` has to be
+> derived from `limit − free` instead of summed from states.
 
 > **Every `*.utilization` metric is optional; the default is the absolute counter.**
 > `system.cpu.utilization`, `system.memory.utilization` and `system.filesystem.utilization` are

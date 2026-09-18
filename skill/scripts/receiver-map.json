@@ -958,9 +958,9 @@
    "attribute": {
     "state": "used"
    },
-   "verdict": "check",
+   "verdict": "default",
    "reshaped": true,
-   "note": "Elastic's actual.used excludes buffers and cache, so it is closest to state=used alone. The receiver's metadata does NOT define what `used` includes, so confirm against a host before trusting either reconstruction. Note also system.linux.memory.available, which the docs call a more accurate alternative to state=free."
+   "note": "Elastic's actual.used excludes buffers and cache, and so does the receiver's `used` state -- these correspond directly. MEASURED 2026-09-18 by running hostmetricsreceiver 0.142.0 and reading /proc/meminfo in the same second, 7 matched pairs: otel `free` == MemFree and `buffered` == Buffers exactly; otel `cached` == Cached + SReclaimable exactly; `used` == 5.69 GB where MemTotal-MemFree was 8.07 GB, so `used` EXCLUDES buffers and cache (MemTotal-MemFree-Buffers-Cached matched it to within 0.25%)."
   },
   "system.memory.actual.used.pct": {
    "receiver": "hostmetrics",
@@ -999,13 +999,9 @@
   "system.memory.used.bytes": {
    "receiver": "hostmetrics",
    "scraper": "memory",
-   "metric": "system.memory.usage",
-   "attribute": {
-    "state": "used"
-   },
-   "verdict": "check",
-   "reshaped": true,
-   "note": "Elastic's used.bytes includes buffers and cache; the receiver tracks `buffered`, `cached` and `used` as SEPARATE states, so this is used+buffered+cached. The receiver's metadata does NOT define what `used` includes, so confirm against a host before trusting either reconstruction. Note also system.linux.memory.available, which the docs call a more accurate alternative to state=free."
+   "verdict": "derive",
+   "how": "system.memory.limit - system.memory.usage{state=free}   (limit is OPTIONAL, enable it)",
+   "note": "Elastic's used.bytes is MemTotal - MemFree, i.e. it INCLUDES buffers and cache, so it is not any single receiver state. Do not reconstruct it as used+buffered+cached: the receiver's `cached` includes SReclaimable, so that sum overshoots MemTotal-MemFree by roughly SReclaimable. MEASURED 2026-09-18 by running hostmetricsreceiver 0.142.0 and reading /proc/meminfo in the same second, 7 matched pairs: otel `free` == MemFree and `buffered` == Buffers exactly; otel `cached` == Cached + SReclaimable exactly; `used` == 5.69 GB where MemTotal-MemFree was 8.07 GB, so `used` EXCLUDES buffers and cache (MemTotal-MemFree-Buffers-Cached matched it to within 0.25%)."
   },
   "system.network.in.bytes": {
    "receiver": "hostmetrics",

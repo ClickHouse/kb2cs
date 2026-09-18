@@ -15,6 +15,7 @@ It exercises, deliberately, one field per verdict plus the shapes that have caus
     returns nothing when a tile filters on the source's spelling;
   * both `process.cpu.utilization` variants, because choosing the wrong one is a 4-16x error;
   * a log field, which must be declined rather than guessed at;
+  * the invariant that no field is left on an unresolved `check` verdict;
   * the input tolerances -- backticks, bullets, blanks, comments, duplicates -- because the
     real input is whatever `inventory-panels.py --fields` last printed.
 
@@ -35,10 +36,11 @@ spec.loader.exec_module(pc)
 MAP = json.load(open(os.path.join(HERE, "..", "receiver-map.json")))
 
 G, R, X = "\033[32m", "\033[31m", "\033[0m"
-fails = []
+fails, ran = [], []
 
 
 def check(desc, cond, detail=""):
+    ran.append(desc)
     print("  %s%s%s  %s" % (G + "ok " + X if cond else R + "bad" + X, "", "", desc))
     if not cond:
         fails.append(desc)
@@ -92,8 +94,27 @@ check("a computable field is `derive`",
       "nginx.stubstatus.dropped" in by.get("derive", []))
 check("an attribute is `dimension`",
       "system.network.name" in by.get("dimension", []))
-check("an unconfirmed semantic is `check`",
-      "system.memory.used.bytes" in by.get("check", []))
+# `check` started at seven fields and is now empty: each was resolved by reading a
+# metadata.yaml or, for the last two, by running hostmetricsreceiver against /proc/meminfo.
+# The verdict stays in the vocabulary because the next addition may need it, but no field
+# should silently acquire it -- an unresolved guess sitting in a customer-facing map is the
+# thing this asserts against.
+check("no field is left on an unconfirmed `check` verdict",
+      not by.get("check"), "still unconfirmed: %r" % by.get("check"))
+check("the `check` verdict remains available for future additions",
+      "check" in MAP["_meta"]["verdicts"])
+e_used = M["system.memory.used.bytes"]
+how = e_used.get("how", "")
+check("the measured memory finding is locked in, FORMULA included",
+      e_used["verdict"] == "derive"
+      and "MEASURED" in e_used.get("note", "")
+      and "limit" in how and "free" in how
+      # the wrong reconstruction is the whole point of the measurement: the receiver's
+      # `cached` includes SReclaimable, so used+buffered+cached overshoots MemTotal-MemFree.
+      and "buffered" not in how
+      and M["system.memory.actual.used.bytes"]["attribute"]["state"] == "used",
+      "used.bytes must derive from limit-free (not used+buffered+cached); "
+      "actual.used maps to state=used. got how=%r" % how)
 check("a log field is declined, not guessed",
       "url.original" in by.get("unmapped", []))
 
@@ -139,8 +160,10 @@ check("the full report runs and exits 0", rc == 0)
 check("the report names every verdict bucket it populated",
       all(w in buf.getvalue() for w in ("DEFAULT", "OFF by default", "No metric", "Derive")))
 
+
 print()
 if fails:
-    print("%s%d of %d checks failed.%s" % (R, len(fails), len(fails) + 0, X))
+    print("%s%d of %d checks failed.%s" % (R, len(fails), len(ran), X))
     sys.exit(1)
-print("%sAll checks passed.%s plan-collector classifies every verdict correctly." % (G, X))
+print("%sAll %d checks passed.%s plan-collector classifies every verdict correctly."
+      % (G, len(ran), X))
