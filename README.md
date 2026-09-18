@@ -380,6 +380,7 @@ skill/            the migration procedure and its scripts — generic, no datase
                     export shapes, enrichment, verification
   scripts/          export-dashboards.sh, inventory-panels.py, introspect-clickstack.py,
                     audit-tiles.py, plan-collector.py (+ receiver-map.json)
+  scripts/tests/    run-all.sh — three suites, no stack required
 verify/           the verification harness — environment-driven, points anywhere
   conf.py           every endpoint and credential, from the environment
   tilediff.py       the bucket-for-bucket machinery

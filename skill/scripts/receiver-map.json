@@ -528,16 +528,20 @@
   "mysql.status.innodb.buffer_pool.pool.reads": {
    "receiver": "mysql",
    "metric": "mysql.buffer_pool.operations",
-   "verdict": "check",
-   "reshaped": true,
-   "note": "exists as mysql.buffer_pool.operations + `operation`, but the operation value for read-requests/reads was not confirmed against metadata.yaml"
+   "attribute": {
+    "operation": "reads"
+   },
+   "verdict": "default",
+   "reshaped": true
   },
   "mysql.status.innodb.buffer_pool.read.requests": {
    "receiver": "mysql",
    "metric": "mysql.buffer_pool.operations",
-   "verdict": "check",
-   "reshaped": true,
-   "note": "exists as mysql.buffer_pool.operations + `operation`, but the operation value for read-requests/reads was not confirmed against metadata.yaml"
+   "attribute": {
+    "operation": "read_requests"
+   },
+   "verdict": "default",
+   "reshaped": true
   },
   "mysql.status.max_used_connections": {
    "receiver": "mysql",
@@ -546,33 +550,21 @@
   },
   "mysql.status.open.files": {
    "receiver": "mysql",
-   "metric": "mysql.opened_resources",
-   "attribute": {
-    "kind": "file"
-   },
-   "verdict": "check",
-   "reshaped": true,
-   "note": "mysql.opened_resources counts resources OPENED (cumulative); the Elastic field is a current gauge. mysql.table.open is the current gauge, tables only"
+   "metric": "mysql.file.open",
+   "verdict": "optional",
+   "note": "use mysql.file.open (a GAUGE of currently open files), not mysql.opened_resources -- that one is a monotonic cumulative count of resources opened"
   },
   "mysql.status.open.streams": {
    "receiver": "mysql",
-   "metric": "mysql.opened_resources",
-   "attribute": {
-    "kind": "table_definition"
-   },
-   "verdict": "check",
-   "reshaped": true,
-   "note": "mysql.opened_resources counts resources OPENED (cumulative); the Elastic field is a current gauge. mysql.table.open is the current gauge, tables only"
+   "verdict": "absent",
+   "degrades_to": "mysql.opened_resources{kind=table_definition} counts resources OPENED cumulatively, not the current number open",
+   "alternative": "sqlqueryreceiver: SHOW GLOBAL STATUS LIKE 'Open_streams' (mysqlreceiver has a current gauge for files only, mysql.file.open)"
   },
   "mysql.status.open.tables": {
    "receiver": "mysql",
-   "metric": "mysql.opened_resources",
-   "attribute": {
-    "kind": "table"
-   },
-   "verdict": "check",
-   "reshaped": true,
-   "note": "mysql.opened_resources counts resources OPENED (cumulative); the Elastic field is a current gauge. mysql.table.open is the current gauge, tables only"
+   "verdict": "absent",
+   "degrades_to": "mysql.opened_resources{kind=table} counts resources OPENED cumulatively, not the current number open",
+   "alternative": "sqlqueryreceiver: SHOW GLOBAL STATUS LIKE 'Open_tables' (mysqlreceiver has a current gauge for files only, mysql.file.open)"
   },
   "mysql.status.questions": {
    "receiver": "mysql",
@@ -968,7 +960,7 @@
    },
    "verdict": "check",
    "reshaped": true,
-   "note": "no `actual_used` state exists; see system.memory.used.bytes"
+   "note": "Elastic's actual.used excludes buffers and cache, so it is closest to state=used alone. The receiver's metadata does NOT define what `used` includes, so confirm against a host before trusting either reconstruction. Note also system.linux.memory.available, which the docs call a more accurate alternative to state=free."
   },
   "system.memory.actual.used.pct": {
    "receiver": "hostmetrics",
@@ -1013,7 +1005,7 @@
    },
    "verdict": "check",
    "reshaped": true,
-   "note": "the receiver's `used` excludes buffers/cache on Linux, so it is closer to Elastic's actual.used than to used.bytes. Reconstruct from the state breakdown and verify"
+   "note": "Elastic's used.bytes includes buffers and cache; the receiver tracks `buffered`, `cached` and `used` as SEPARATE states, so this is used+buffered+cached. The receiver's metadata does NOT define what `used` includes, so confirm against a host before trusting either reconstruction. Note also system.linux.memory.available, which the docs call a more accurate alternative to state=free."
   },
   "system.network.in.bytes": {
    "receiver": "hostmetrics",

@@ -18,6 +18,23 @@ Three things this answers that a name-level mapping table cannot:
 > reference project this was got wrong twice in the same week — see "What this file corrects"
 > at the end.
 
+## Verdicts
+
+The same six words are used throughout, and `scripts/receiver-map.json` carries them per
+field so `plan-collector.py` can act on them:
+
+| verdict | meaning |
+|---|---|
+| **default** | the receiver emits it with a default config — nothing to configure |
+| **optional** | the receiver has it but it is OFF by default — enable it explicitly |
+| **check** | a near equivalent exists but the semantics or the attribute value were not confirmed |
+| **absent** | no equivalent on this receiver — see its alternative |
+| **derive** | no metric needed; compute it in the tile |
+| **dimension** | not a metric at all; it becomes an attribute |
+
+**reshaped** is orthogonal and can apply to any of them: several source fields collapsing into
+one metric that carries the distinction as an attribute.
+
 ## Status of this document
 
 Every row below was read off the receiver's documentation or `metadata.yaml` on
@@ -65,8 +82,9 @@ expectations to one format.
 |---|---|---|
 | `threads.*` | `mysql.threads` + `kind` | default |
 | `innodb.buffer_pool.pages.*` | `mysql.buffer_pool.pages` + `kind` | default |
-| `innodb.buffer_pool.{read.requests,pool.reads}` | `mysql.buffer_pool.operations` + `operation` | **reshaped** |
-| `open.{files,tables,streams}` | `mysql.opened_resources` + `kind` | *cumulative opened*, not current — `mysql.table.open` is the current gauge |
+| `innodb.buffer_pool.{read.requests,pool.reads}` | `mysql.buffer_pool.operations` + `operation`(`read_requests`, `reads`) | default, **reshaped** |
+| `open.files` | `mysql.file.open` | optional. A **gauge** of currently open files |
+| `open.{tables,streams}` | **absent** | `mysql.opened_resources` is a *monotonic cumulative* count of resources opened, not the current number open, and there is no gauge for tables or streams → `sqlqueryreceiver` on `SHOW GLOBAL STATUS LIKE 'Open_tables'` |
 | `command.*` | `mysql.commands` + `command` | **optional** |
 | `connections` | `mysql.connection.count` | optional |
 | `connection.errors.*` | `mysql.connection.errors` + `error` | optional |
@@ -113,8 +131,9 @@ paging scrapers — all eight.
 | `system.cpu.{user,system,nice,irq,softirq,iowait}.norm.pct` | `system.cpu.utilization` + `cpu` + `state` | **optional** | **6 → 1.** Default is `system.cpu.time` (cumulative **seconds**) |
 | — | its `state` values | | `idle, interrupt, nice, softirq, steal, system, user, wait` — **`interrupt`** not `irq`, **`wait`** not `iowait` |
 | `system.load.{1,5,15}` | `system.cpu.load_average.{1m,5m,15m}` | default | renamed and re-parented |
-| `system.memory.{used.bytes,free,...}` | `system.memory.usage` + `state` | default | **n → 1.** States: `buffered, cached, inactive, free, slab_reclaimable, slab_unreclaimable, used` — there is **no `actual_used`**; Elastic's "actual" (excluding buffers/cache) has to be reconstructed from the state breakdown |
+| `system.memory.{used.bytes,free,...}` | `system.memory.usage` + `state` | default | **n → 1.** States: `buffered, cached, inactive, free, slab_reclaimable, slab_unreclaimable, used` — there is **no `actual_used`**. `buffered`, `cached` and `used` are tracked separately, so Elastic's `used.bytes` ≈ `used+buffered+cached` and its `actual.used` ≈ `used` alone. **The receiver's metadata does not define what `used` includes**, so confirm against a host; the docs also flag `system.linux.memory.available` as more accurate than `state=free` |
 | `system.memory.actual.used.pct` | `system.memory.utilization` + `state` | **optional** | carries `state`, so a single percentage needs picking a state |
+| `system.memory.total` | `system.memory.limit` | **optional** | |
 | `system.network.{in,out}.bytes` | `system.network.io` + `device` + `direction` | default | **2 → 1**; direction is `receive`/`transmit` |
 | `system.network.{in,out}.packets` | `system.network.packets` + `device` + `direction` | default | **2 → 1** |
 | `system.network.{in,out}.dropped` | `system.network.dropped` + `device` + `direction` | default | **2 → 1** |
@@ -159,10 +178,10 @@ for someone to discover by copying a tile.
 | integration | deviation | why it matters |
 |---|---|---|
 | **apache** | attribute key `state` where the receiver uses `scoreboard_state` / `workers_state` | a tile copied from here filters on the wrong key. The newer `apache.connections.async` uses the correct `connection_state`, so apache currently carries **two conventions** |
-| **mysql** | `mysql.open_resources` → receiver is `mysql.opened_resources` (and is *cumulative opened*, not a current gauge — `mysql.table.open` is the gauge) | wrong name **and** wrong semantics |
+| **mysql** | `mysql.open_resources` → for files the receiver has `mysql.file.open`, a gauge; for tables and streams it has **nothing current** (`mysql.opened_resources` is a monotonic cumulative count of opens) | wrong name **and** wrong semantics |
 | **mysql** | `mysql.traffic` + `direction` → receiver is `mysql.client.network.io` + `kind` | name and attribute both differ |
 | **mysql** | `mysql.questions` → receiver is `mysql.query.count` | renamed |
-| **mysql** | `mysql.buffer_pool.{read_requests,reads}` → receiver reshapes to `mysql.buffer_pool.operations` + `operation` | two metrics become one + a dimension |
+| **mysql** | `mysql.buffer_pool.{read_requests,reads}` → `mysql.buffer_pool.operations` + `operation`(`read_requests`/`reads`) | two metrics become one + a dimension |
 | **mysql** | `mysql.ssl_cache`, `mysql.aborted`, `mysql.replica.log_position.*` | no receiver equivalent → `sqlqueryreceiver` |
 | **system** | `system.process.*` → receiver emits `process.*` (**no `system.` prefix**) | wrong namespace |
 | **system** | `system.process.cpu.pct` | not a receiver metric; see the V0/V1 normalisation trap above |
