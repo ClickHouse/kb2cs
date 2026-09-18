@@ -254,11 +254,15 @@ Every migration has a residue. Write it down with the *reason*, classified:
 | third-party dataset differs | GeoLite2 vs DB-IP country | no — migrate the *database* to fix |
 | precision differs at source | second vs millisecond timestamps | no |
 | **source parses it wrong** | IPv6 client address truncated to its last hextet by the source's own grok | n/a — the target is already right |
-| **collection gap** | the target's collector emits no equivalent metric at all (apache async connections) | only by changing what the collector scrapes |
+| **collection gap** | the signal is not in the target collector's *default* set — an optional metric that is off, or one no standard receiver exposes | yes, by changing collector configuration, not the tile |
 
 Two rows mislead people. **Third-party dataset differs** is the one read as a bug: geo is the enrichment where "same data, same query" still does not mean "same answer", because the answer depends on a dataset that belongs to neither platform.
 
-**Collection gap** is the one that is not a dashboard problem at all. A metrics migration can hit a panel whose *signal does not exist* on the target — not a missing chart type, not a field that needs deriving, but nothing collected. One of eleven panels in the reference apache metrics dashboard was this: the standard OTel apachereceiver emits no async-connection metric. Say so, and say that closing it means changing the collector's configuration, not the tile.
+**Collection gap** is the one that is not a dashboard problem at all: the panel's signal is not arriving, so no tile can be written. Its resolution is a collector change, not a tile change — which is why the collector configuration belongs in the migration's scope.
+
+> **Before declaring one, read the receiver's `metadata.yaml`.** In the reference project this class was claimed twice and was wrong both times. An apache panel was recorded as unmigratable because "the standard apachereceiver emits no async-connection metric" — it emits `apache.connections.async` and enables it *by default*; the panel had been dropped on an assumption never checked against the target, and the data was already in the corpus. A postgres panel was then recorded the same way because `postgresqlreceiver` has no per-statement metrics — true, but `sqlqueryreceiver` scrapes `pg_stat_statements` directly, so the answer was a second receiver rather than a lost panel.
+>
+> What survives as a genuine gap is narrower and more useful: **the metric exists but is not enabled by default** (`system.cpu.utilization` is optional; the default is cumulative `system.cpu.time`), or **it needs a receiver nobody configured**. Both are answered by collector config, and neither is a reason to abandon a panel.
 
 **Source parses it wrong** is the row that inverts the exercise, so say so explicitly when it happens. "Verify against the source platform" quietly assumes the source is correct, and sometimes it is not: one migration turned up three defects in Elastic's own apache parsing — IPv6 client addresses truncated to their final hextet and filed under `source.domain`, `url.original` dropped whenever the request line contained a backslash, and a trailing dot on `user_agent.version` from a capture group that matched the empty string. None raised `_grokparsefailure`, and none were visible from reading panel definitions; only diffing whole distributions surfaced them.
 

@@ -16,7 +16,7 @@ integration is complete. Every number below was measured against the running sta
 | **nginx** (logs) | 3.2.2 | 2 | 10 | 12 | **migrated** 2026-08-20 — 12 tiles + 2 saved searches, `verify-nginx.sh` 42/42, **12 series bucket-for-bucket** |
 | **apache** (logs) | 3.0.2 | 1 | 7 | 12 | **migrated** 2026-09-16 — 8 tiles, `verify-apache.sh` 45/45, **11 series bucket-for-bucket** |
 | **nginx** (metrics) | 3.2.2 | 1 | 8 | 10 | **migrated** 2026-09-16 — 9 tiles (7 `sql`), `verify-nginx.sh` 42/42, **11 series bucket-for-bucket** |
-| **apache** (metrics) | 3.0.2 | 1 | 11 | 33 | **migrated** 2026-09-16 — 12 tiles (10 `sql`, 1 panel unmigratable), `verify-apache.sh` 45/45, **43 series bucket-for-bucket** |
+| **apache** (metrics) | 3.0.2 | 1 | 11 | 33 | **migrated** 2026-09-18 — 13 tiles (11 `sql`), nothing unmigratable, `verify-apache.sh` 46/46, **46 series bucket-for-bucket** |
 | **postgresql** (logs) | 1.31.0 | 2 | 6 | 7 | **migrated** 2026-09-16 — 8 tiles, **all builder**, nothing degraded; covered by the same `verify-postgres.sh` 21/21, **7 series bucket-for-bucket** |
 | **postgresql** (metrics) | 1.31.0 | 1 | 9 | 19 | **migrated** 2026-09-16 — 10 tiles (9 `sql`, one template ×8), `verify-postgres.sh` 21/21, **31 series bucket-for-bucket** |
 | **mysql** (logs) | 1.28.1 | 1 | 6 | 6 | **migrated** 2026-09-16 — 7 tiles (1 `sql`), **multi-line** slow log; covered by the same `verify-mysql.sh` 36/36 (no series; search/terms tiles) |
@@ -241,7 +241,7 @@ survives — counters and derived rates dominate, and neither is a builder shape
 | `CPU usage` | `sql` — mixes a gauge with four values inside a cumulative Sum |
 | `Scoreboard` | `sql`, but for a different reason: 22 series (11 states × 2 hosts) **truncate to 2–3 buckets each** in a builder tile — and then truncated again at its own `LIMIT 5000`. See below |
 | `Total connections`, `Workers`, `Average server load` | **`sql` since 2026-09-16** — were builder gauge tiles, but a gauge is collapsed to one sample per bucket before `aggFn`, so `avg()`/`max()` over the bucket's samples is not a builder shape either |
-| `Connections` (async writing/keep-alive/closing) | **not migratable** — the standard OTel apachereceiver emits no async-connection metric |
+| `Connections` (async writing/keep-alive/closing) | **`sql`** — `apache.connections.async` + `connection_state`. Recorded as unmigratable until 2026-09-18; see below |
 
 Four findings, on top of what nginx metrics established:
 
@@ -270,9 +270,39 @@ Four findings, on top of what nginx metrics established:
   a top-N table truncation is the *point*: three `[Logs System]` tiles carry `LIMIT 5` and
   their Kibana panels specify `size: 5`, so flagging those would have produced three false
   positives and trained everyone to ignore the check.
-- **A new residue class: the collection gap.** `Connections` is not blocked by a missing chart
-  type or an unmapped field — the signal is not collected on the target. Closing it means
-  changing the collector, not the tile. Added to the skill's residue table.
+- **A new residue class: the collection gap — and it was claimed on a false premise.**
+  `Connections` was recorded as unmigratable because "the standard OTel apachereceiver emits
+  no async-connection metric". **It does**: `apache.connections.async` with a
+  `connection_state` attribute, *enabled by default*. Reading the receiver's `metadata.yaml`
+  on 2026-09-18 settled it in one fetch.
+
+  The data had been there all along — `generate-apache-metrics.py` emits
+  `conn_async_{writing,keep_alive,closing}` and the Elasticsearch loader loads them as
+  `apache.status.connections.async.*`. Only the ClickStack loader skipped them, on an
+  assumption about the target that was never checked against the target. That is the exact
+  failure mode this document keeps recording, applied to itself, and it cost one panel for
+  two days.
+
+  Fixed: the loader emits the metric, the dashboard has an eleventh data tile (`max`, not
+  `avg` — that is the operation the Kibana panel uses), `expect_apache.py` diffs all three
+  series bucket-for-bucket, and `verify-apache.sh` asserts the metric's shape so it cannot go
+  missing again. Apache is now **0 unmigratable panels**.
+
+  The residue class survives but is **reframed**, because its example was false and its
+  replacement nearly was too: `postgresqlreceiver` has no per-statement metrics, but
+  `sqlqueryreceiver` scrapes `pg_stat_statements` directly. What is genuinely a collection gap
+  is narrower — *the metric is not in the collector's default set*: either optional and off
+  (`system.cpu.utilization`; the default is cumulative `system.cpu.time`) or needing a
+  receiver nobody configured. Both are answered by collector configuration, not by abandoning
+  a panel.
+- **The attribute KEYS are not receiver-faithful, and that is still open.** The receiver
+  names each old-format attribute after its own metric — `connection_state`,
+  `scoreboard_state`, `workers_state` — where this repo uses plain `state` for
+  `apache.scoreboard` and `apache.workers`. The new `apache.connections.async` uses the
+  correct `connection_state` rather than propagating the deviation, so the apache metrics
+  currently carry two conventions. Fixing the other two means rewriting their tiles and their
+  22 + 2 expectations; recorded here rather than done quietly.
+
 - **The reshape lost nothing.** Elastic spreads mod_status across one field per dimension
   value; OTel carries the dimension as an attribute. Eleven `scoreboard.*` fields became one
   `apache.scoreboard` + `state`; five `cpu.*` fields became `apache.cpu.time` + `level` +

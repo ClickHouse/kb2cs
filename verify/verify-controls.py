@@ -166,12 +166,16 @@ def run(filters, quiet=False):
     _state["pass"] = _state["fail"] = 0
     _state["quiet"] = quiet
 
-    # The container's own id: resolved, not hardcoded, because it changes on recreate.
-    self_host = ch("SELECT DISTINCT ResourceAttributes['host.name'] FROM %s "
-                   "WHERE MetricName LIKE 'otelcol%%' "
-                   "AND ResourceAttributes['host.name'] != '' LIMIT 1"
-                   % conf.table("otel_metrics_gauge"))
-    self_host = (self_host or "").strip() or None
+    # The container's own ids. A SET, not one value: the id changes every time the container
+    # is recreated, and the self-telemetry from previous incarnations stays in the table. A
+    # `LIMIT 1` here passed for as long as the stack was never restarted, then failed three
+    # checks the first time it was -- reporting the PREVIOUS id as an unexpected extra. Bringing
+    # the stack down and up is a documented routine operation, so this had to be set-valued.
+    out = ch("SELECT DISTINCT ResourceAttributes['host.name'] FROM %s "
+             "WHERE MetricName LIKE 'otelcol%%' "
+             "AND ResourceAttributes['host.name'] != ''"
+             % conf.table("otel_metrics_gauge"))
+    self_hosts = {l.strip() for l in (out or "").splitlines() if l.strip()}
 
     if not quiet:
         hdr("The control bar survived the migration at all")
@@ -199,12 +203,10 @@ def run(filters, quiet=False):
             continue
         want = es_terms(idx, field)
         # The collector's own id can never be in Elastic; account for it, do not ignore it.
-        extra = got - want - ({self_host} if self_host else set())
+        extra = got - want - self_hosts
         missing = want - got
-        if self_host and self_host in got:
-            selfnote = f" [+{self_host}]"
-        else:
-            selfnote = ""
+        seen_self = sorted(self_hosts & got)
+        selfnote = f" [+{', '.join(seen_self)}]" if seen_self else ""
         if exact:
             if not extra and not missing:
                 ok(f"{dash} / {name}: identical to Kibana ({len(got)}){selfnote}")
@@ -236,22 +238,24 @@ def run(filters, quiet=False):
 
     if not quiet:
         hdr("Why the self-telemetry rows are inert")
-    if self_host is None:
+    if not self_hosts:
         ok("no collector self-telemetry in otel_metrics_* -- metric dropdowns are exact")
     else:
         pref = ("nginx.", "apache.", "mysql.", "postgresql.", "system.", "process.")
         cond = " OR ".join(f"MetricName LIKE '{p}%'" for p in pref)
         gauge, summ = conf.table("otel_metrics_gauge"), conf.table("otel_metrics_sum")
+        inlist = ", ".join("'%s'" % h for h in sorted(self_hosts))
         n = ch(f"SELECT count() FROM (SELECT 1 FROM {gauge} "
-               f"WHERE ResourceAttributes['host.name']='{self_host}' UNION ALL "
+               f"WHERE ResourceAttributes['host.name'] IN ({inlist}) UNION ALL "
                f"SELECT 1 FROM {summ} "
-               f"WHERE ResourceAttributes['host.name']='{self_host}')")
+               f"WHERE ResourceAttributes['host.name'] IN ({inlist}))")
         d = ch(f"SELECT count() FROM (SELECT 1 FROM {gauge} "
-               f"WHERE ResourceAttributes['host.name']='{self_host}' AND ({cond}) UNION ALL "
+               f"WHERE ResourceAttributes['host.name'] IN ({inlist}) AND ({cond}) UNION ALL "
                f"SELECT 1 FROM {summ} "
-               f"WHERE ResourceAttributes['host.name']='{self_host}' AND ({cond}))")
+               f"WHERE ResourceAttributes['host.name'] IN ({inlist}) AND ({cond}))")
         if d == "0":
-            ok(f"{self_host!r} is the container id: {n} self-telemetry rows, 0 dataset rows")
+            ok(f"{len(self_hosts)} container id(s) {sorted(self_hosts)}: "
+               f"{n} self-telemetry rows, 0 dataset rows")
             if not quiet:
                 note("HyperDX's OpAMP config injects a prometheus receiver scraping the")
                 note("bundled collector's :8888 into the metrics pipeline. Not fixable from")
@@ -259,7 +263,8 @@ def run(filters, quiet=False):
                 note("sourceId, sourceMetricType} with no predicate field, so the option")
                 note("list is always SELECT DISTINCT over the whole table. See INTEGRATIONS.md.")
         else:
-            bad(f"{self_host!r} carries {d} DATASET metric rows -- not self-telemetry, investigate")
+            bad(f"{sorted(self_hosts)} carry {d} DATASET metric rows -- not self-telemetry, "
+                f"investigate")
 
     # The reason the rows above are harmless: nothing queryable can reach them.
     unscoped = []

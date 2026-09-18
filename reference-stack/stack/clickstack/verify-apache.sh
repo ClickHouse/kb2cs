@@ -224,8 +224,20 @@ GAU="default.otel_metrics_gauge"
 
 # 11 source panels -> 10 data tiles + a gap note for the unmigratable one + provenance.
 tiles=$(q "tilecount:$DASH_METRICS")
-if [ "$tiles" = "12" ]; then ok "$DASH_METRICS — 12 tiles (10 data + gap note + provenance)"
-else bad "expected 12 tiles, found '${tiles:-none}'" "re-run the migration"; fi
+if [ "$tiles" = "13" ]; then ok "$DASH_METRICS — 13 tiles (11 data + 2 notes)"
+else bad "expected 13 tiles, found '${tiles:-none}'" "re-run the migration"; fi
+
+# The async-connections panel. This was declared "not migratable -- the standard OTel
+# apachereceiver emits no async-connection metric" until 2026-09-18, when reading the
+# receiver's metadata.yaml showed it emits `apache.connections.async` + `connection_state`
+# and enables it BY DEFAULT. The corpus and the Elastic loader had carried the data the whole
+# time; only the ClickStack loader skipped it, on an assumption never checked against the
+# target. Asserted here so the panel cannot go missing again.
+expect "async connections: 3 states x 2 hosts, 17,280 points" "closing keepalive writing 2 17280" \
+  "SELECT concat(arrayStringConcat(arraySort(groupUniqArray(Attributes['connection_state'])), ' '),
+                 ' ', toString(uniqExact(ResourceAttributes['host.name'])),
+                 ' ', toString(count()))
+   FROM $GAU WHERE MetricName = 'apache.connections.async'"
 
 tags=$(q "tags:$DASH_METRICS")
 if [ "$tags" = "apache,metrics,migrated-from-kibana" ]; then ok "tagged apache + metrics + migrated-from-kibana"
@@ -235,7 +247,7 @@ else bad "tags are '$tags'"; fi
 head_ "Series landed (5,760 scrapes x 25 points)"
 
 expect "sum points = 40,320"     "40320" "SELECT count() FROM $SUM WHERE MetricName LIKE 'apache.%'"
-expect "gauge points = 103,680"  "103680" "SELECT count() FROM $GAU WHERE MetricName LIKE 'apache.%'"
+expect "gauge points = 120,960"  "120960" "SELECT count() FROM $GAU WHERE MetricName LIKE 'apache.%'"
 expect "2 hosts as resource attributes" "2" \
   "SELECT uniqExact(ResourceAttributes['host.name']) FROM $SUM WHERE MetricName='apache.requests'"
 expect "counters cumulative + monotonic" "2 true" \

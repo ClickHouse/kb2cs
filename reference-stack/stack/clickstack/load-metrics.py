@@ -73,9 +73,18 @@ NGINX_STATES = ("active", "reading", "writing", "waiting")
 #       mod_status computes these (counter / uptime) and the OTel receiver does not emit
 #       them. Derive them on the target from apache.requests and apache.uptime.
 #   connections.async.{writing,keep_alive,closing}
-#       no standard metric exists at all. That leaves one panel with no source on the
-#       target -- a gap in COLLECTION, not in chart types, which is a residue class the
-#       logs migrations never produced.
+#       emitted as `apache.connections.async` + `connection_state`, which the receiver has
+#       and enables BY DEFAULT. This was skipped until 2026-09-18 on the stated belief that
+#       "no standard metric exists at all" -- an assumption about the target that was never
+#       checked against the target, which is the exact failure mode this repo keeps
+#       documenting. It cost one panel.
+#
+#       NOTE the attribute key: `connection_state`, not `state`. The receiver names each
+#       old-format attribute after its metric -- `connection_state`, `scoreboard_state`,
+#       `workers_state` -- and `apache.scoreboard` / `apache.workers` above use plain
+#       `state` here, which is a REMAINING deviation, not a convention. Fixing those means
+#       rewriting their tiles and expectations too; recorded in INTEGRATIONS.md rather than
+#       propagated to this new metric.
 APACHE_SUMS = (("uptime", "apache.uptime"),
                ("total_accesses", "apache.requests"),
                ("total_bytes", "apache.traffic"))
@@ -85,6 +94,10 @@ APACHE_SCOREBOARD = (("open_slot", "open"), ("waiting_for_connection", "waiting"
                      ("dns_lookup", "dnslookup"), ("closing_connection", "closing"),
                      ("logging", "logging"), ("gracefully_finishing", "finishing"),
                      ("idle_cleanup", "idle_cleanup"))
+# Three Elastic fields under `connections.async.*` become one metric + `connection_state`.
+APACHE_ASYNC = (("conn_async_writing", "writing"),
+                ("conn_async_keep_alive", "keepalive"),
+                ("conn_async_closing", "closing"))
 # Elastic's five cpu fields become ONE metric with two attributes.
 APACHE_CPU = ((("cpu_user", "self", "user"), ("cpu_system", "self", "system"),
                ("cpu_children_user", "children", "user"),
@@ -387,6 +400,14 @@ def build_apache(rows):
         workers.extend(datapoint(ns, r[field], attrs={"state": state}) for r, ns in rows)
     metrics.append({"name": "apache.workers", "unit": "1", "gauge": {"dataPoints": workers}})
     written += len(rows) * 2
+
+    async_conns = []
+    for field, state in APACHE_ASYNC:
+        async_conns.extend(datapoint(ns, r[field], attrs={"connection_state": state})
+                           for r, ns in rows)
+    metrics.append({"name": "apache.connections.async", "unit": "1",
+                    "gauge": {"dataPoints": async_conns}})
+    written += len(rows) * len(APACHE_ASYNC)
 
     sb = []
     for efield, state in APACHE_SCOREBOARD:
@@ -753,8 +774,8 @@ SERVICES = {
     "nginx": {"src": "nginx-stubstatus.jsonl", "build": build_nginx,
               "per_scrape": len(NGINX_SUMS) + len(NGINX_STATES)},
     "apache": {"src": "apache-status.jsonl", "build": build_apache,
-               "per_scrape": len(APACHE_SUMS) + 1 + 2 + len(APACHE_SCOREBOARD)
-                             + len(APACHE_CPU) + 1 + 3},
+               "per_scrape": len(APACHE_SUMS) + 1 + 2 + len(APACHE_ASYNC)
+                             + len(APACHE_SCOREBOARD) + len(APACHE_CPU) + 1 + 3},
     # postgres has TWO series files, loaded as two passes over one --service
     "postgresql": {"parts": [
         {"src": "postgres-database.jsonl", "build": build_pg_database,

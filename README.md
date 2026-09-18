@@ -263,7 +263,7 @@ Declare these before translating anything.
 | **enrichment absent** | `user_agent.name`, `source.geo.*` — computed by an ingest pipeline, so not in the data | yes, via a ClickHouse dictionary — see `skill/references/enrichment.md` |
 | **third-party dataset differs** | GeoLite2 against DB-IP: same query, same data, different country. Differs by ~43 % on some countries | no — migrate the *database* to fix |
 | **source precision differs** | second-resolution timestamps against millisecond; `scaled_float(1000)` destroying values below 5e-4 | no |
-| **collection gap** | the target's collector emits no equivalent metric at all (apache async connections) | yes, by changing the collector — not the tile |
+| **collection gap** | the signal is not in the collector's *default* set — an optional metric left off (`system.cpu.utilization`), or one needing a receiver nobody configured (`sqlqueryreceiver` for `pg_stat_statements`) | yes, by changing collector configuration — not the tile |
 
 The third and fourth rows are the ones people misread as bugs.
 
@@ -278,8 +278,8 @@ dashboards, 126 data tiles.**
 |---|---:|---:|---:|---|---:|---|
 | **nginx** (logs) | 2 | 10 | 10/10 | `verify-nginx.sh` 42/42 | 12 series | complete |
 | **nginx** (metrics) | 1 | 8 | 8/8 | `verify-nginx.sh` 42/42 | 11 series | complete |
-| **apache** (logs) | 1 | 7 | 7/7 | `verify-apache.sh` 45/45 | 11 series | complete |
-| **apache** (metrics) | 1 | 10 | 10/10 | `verify-apache.sh` 45/45 | 43 series | complete ¹ |
+| **apache** (logs) | 1 | 7 | 7/7 | `verify-apache.sh` 46/46 | 11 series | complete |
+| **apache** (metrics) | 1 | 11 | 11/11 | `verify-apache.sh` 46/46 | 46 series | complete |
 | **postgresql** (logs) | 2 | 6 | 6/6 | `verify-postgres.sh` 21/21 | 7 series | complete |
 | **postgresql** (metrics) | 1 | 9 | 9/9 | `verify-postgres.sh` 21/21 | 31 series | complete |
 | **mysql** (logs) | 1 | 6 | 6/6 | `verify-mysql.sh` 36/36 | — ² | complete |
@@ -289,10 +289,10 @@ dashboards, 126 data tiles.**
 | system (Windows Security) | 5 | — | — | — | — | **read only** ⁴ |
 | kubernetes | 15 | — | — | — | — | **read only** ⁵ |
 | synthetics | 0 | — | — | — | — | ships no dashboards |
-| **total** | **17 / 37 read** | **126** | **126/126** | **228 checks, 0 failures** | **200 series** | |
+| **total** | **17 / 37 read** | **127** | **127/127** | **229 checks, 0 failures** | **203 series** | |
 
 ¹ Has a declared loss: a map panel (apache, system logs), two categorical heatmaps (system
-metrics), one uncollected metric (apache async connections). See
+metrics). See
 [`reference-stack/INTEGRATIONS.md`](reference-stack/INTEGRATIONS.md).
 ² Six `search`/`terms` tiles — no time series to diff; covered by `verify-mysql.sh`.
 ³ Ported 2026-09-17 from the harnesses the system migration was originally verified with,

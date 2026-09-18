@@ -706,7 +706,7 @@ docker compose run --rm -e SHIFT_ANCHOR_EPOCH="$SHIFT_ANCHOR_EPOCH" load \
 
 cd ../clickstack
 export SHIFT_NS=$(SERVICE=apache ../../ingest/clickstack/shift-ns.sh --align-hour)
-python3 load-metrics.py --service apache     # 40,320 sum + 103,680 gauge points
+python3 load-metrics.py --service apache     # 40,320 sum + 120,960 gauge points
 ./verify-apache.sh                   # 21 checks
 ```
 

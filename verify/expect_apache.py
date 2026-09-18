@@ -99,6 +99,16 @@ def build():
         "_kind": "long", "_series_col": "series", "_value_col": "value",
         "_tol": 5e-4, "_data": cpu}
 
+    # Restored 2026-09-18. This panel had been declared "not migratable -- the standard OTel
+    # apachereceiver emits no async-connection metric", which was simply false: the receiver
+    # emits `apache.connections.async` + `connection_state` and enables it BY DEFAULT. The
+    # corpus and the Elastic loader had carried the data all along; only the ClickStack loader
+    # skipped it. `max`, not `avg`, because that is the operation the Kibana panel uses.
+    e["Connections"] = {
+        "Writing": td.e_agg(A + "connections.async.writing", "max", STATUS),
+        "Keep alive": td.e_agg(A + "connections.async.keep_alive", "max", STATUS),
+        "Closing": td.e_agg(A + "connections.async.closing", "max", STATUS)}
+
     # ---- log dashboard ----------------------------------------------------------
     # Precision-aware: Elastic stores these at second resolution, ClickStack keeps the
     # millisecond, so a bucket edge moves up to one second's events. Bound queried per series.
