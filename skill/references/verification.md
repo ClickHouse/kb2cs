@@ -178,6 +178,35 @@ reference, so a human confirms the pairing — and are *not* counted as findings
 map down is the point: the pair `X.pct` / `X.norm.pct` differs only by core count, and
 choosing wrong looks identical to choosing right.
 
+### Pairing a tile to its panel is where this check goes wrong
+
+Everything the audit reports is relative to the panel it thinks a tile came from, so a bad
+pairing does not weaken the check — it **manufactures findings**. Three rules, each learned
+from a false positive on the reference estate:
+
+1. **Match within the tile's own source dashboard.** Panel titles repeat across integrations:
+   `Connections` exists on both a MySQL and an Apache dashboard, `CPU Usage` on two system
+   dashboards. Searching the whole export paired an Apache tile to the MySQL panel and then
+   flagged a chart-type difference that was purely the mispairing. Scope the search, and use
+   the field-overlap fallback rather than widening it.
+2. **Assign one panel per tile.** Two tiles can reduce to the same title — a migrated
+   `SSH login attempts` chart and an added `SSH login attempts (search)` raw-rows view. Matched
+   independently, both claimed the panel, and the search tile was flagged "panel is a stacked
+   bar but tile is a search". Assign greedily in two passes, exact titles first, so the result
+   does not depend on tile order.
+3. **Tolerate annotations on either side, but only when unambiguous.** A migrated tile gains
+   `(SQL: why it is not a builder tile)`; a stock Kibana panel carries `[Metrics Apache]` or
+   `(converted)`. Stripping a trailing parenthetical or bracket recovers those pairings — but
+   `Network traffic (bytes)` and `Network traffic (packets)` are *two different panels*, and
+   stripping both sides paired the bytes tile to the packets panel. Strip only as a fallback
+   after an exact match fails, and accept it only when exactly one panel matches. Ambiguity
+   means no pairing, which is the honest answer.
+
+Together these took the reference estate from 56 tiles paired to 96, and removed three
+findings that were all mispairings rather than defects. **Before trusting a new pairing rule,
+list every non-exact pairing it makes and read them** — the count going up is not evidence the
+pairings are right.
+
 ### What it cannot do
 
 - **Untitled panels.** Many stock panels have a UUID for a title, so title matching leaves
@@ -307,6 +336,12 @@ Three things that make this harness work rather than produce noise:
 - **Use one absolute window, defined once**, for every comparison on both platforms.
 - **Trim the two edge buckets on `increase` tiles** — the builder produces a leading value
   Kibana nulls, and a trailing bucket past `endTime`. Both are platform behaviour.
+
+> **It has since been extended to 203 tile series across five integrations**, and each
+> extension found something the previous suite had passed: a `count_distinct` under-counting on
+> a metric source, and a tile silently truncated by its own row cap. Extending the diff to a
+> new integration is cheap — the machinery is shared and only the source-side expectations are
+> per-integration — and it has never yet been extended without finding something.
 
 ## Count records, not lines, when the source format is multi-line
 

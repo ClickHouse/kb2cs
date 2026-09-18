@@ -4,9 +4,11 @@ description: >
   Migrate Kibana dashboards, visualizations and saved searches to ClickStack (HyperDX)
   dashboards and tiles. Use when asked to move, port, convert or recreate Kibana/Elastic/ELK
   dashboards or panels on ClickStack, HyperDX or ClickHouse observability, or to map ECS
-  fields onto a ClickStack OTel schema. Covers exporting saved objects, translating
-  aggregations to tile specs, and verifying migrated tiles against the source numbers and
-  against the source's rendered charts.
+  fields onto a ClickStack OTel schema. Also use when asked which OTel receiver replaces an
+  Elastic integration, or what collector configuration a set of dashboards needs. Covers
+  exporting saved objects, deriving the collector config from the panels being kept,
+  translating aggregations to tile specs, and verifying migrated tiles against the source
+  numbers and against the source's rendered charts.
 ---
 
 # Migrating Kibana dashboards to ClickStack
@@ -326,7 +328,9 @@ reliable; where it was reasoned, it may be wrong in your deployment.
 | Data-view resolution and `--sources` | **Measured** on the same 334 panels: all six reference shapes, including 43 ad-hoc data views, 12 with Painless runtime fields, and a cross-cluster pattern. The only panels left with no data view are the 40 prose panels, which correctly read nothing |
 | `--triage` | **Measured** on the same estate (37 dashboards, 347 panels): **128 ready / 216 decide / 3 blocked**. The heatmap rule was added 2026-09-17 after ClickStack's heatmap turned out to have no categorical axis — it had been calling two unmigratable panels "ready". It was 140/189/3 until the mysql migration showed the metric rules were too lenient — a panel doing `average()`/`max()` on a metric's *value* has no builder path whether the field is a Sum or a Gauge, and a `table` tile takes no row limit, so `terms(f) size=N` on a datatable needs SQL. 22 panels moved from ready to decide, which is the more honest split |
 | The visual pass (step 7c) | **Measured, by failing six times.** Six tile bugs passed a fully green numeric suite and were caught only by comparing charts — and the last three survived bucket-for-bucket diffing too, because they were shape errors whose every value was correct (a saved search collapsed to one row, four chart types hand-picked away from the source, and a panel whose field was constant). The protocol in `references/verification.md` is written from those six |
-| **Bucket-for-bucket diffing** | **Measured, and it found what the visual pass could not.** The mysql migration diffed all 42 tile series against Elasticsearch per bucket, and the same method then exposed **8 wrong series in two earlier migrations that had passed 22/22 and looked right on screen** — gauge tiles off by 3.63 vs 3.67. Totals, whole-window averages and charts all miss this. Diff buckets |
+| **Bucket-for-bucket diffing** | **Measured, and it found what the visual pass could not.** Now **203 tile series across five integrations**, diffed against Elasticsearch per bucket. It began as 42 mysql series, and extending it exposed **8 wrong series in two migrations that had passed 22/22 and looked right on screen** (gauge tiles off by 3.63 vs 3.67), a `count_distinct` under-counting on a metric source, and a tile silently truncated by its own row cap. Totals, whole-window averages and charts all miss these. Diff buckets |
+| **Elastic integration → OTel receiver** mapping | **Measured 2026-09-18**, every row read off a receiver's own `documentation.md`/`metadata.yaml` — nginx, apache, mysql, postgresql and all eight hostmetrics scrapers. 142 fields in `scripts/receiver-map.json`, prose twin in `references/integration-to-receiver.md`, a sync check keeping them honest. Two claims this project had made from *assuming* a receiver's capability were wrong, so treat any "absent" verdict as needing the metadata read |
+| Keeping the SOURCE's schema on the target | **Measured 2026-09-18.** ECS as flat typed columns: a **log** source maps it via expressions and a dashboard renders; a **metric** source cannot, because it requires the narrow OTel metric tables. Also measured: the source's semantic expressions do not rewrite query identifiers. `references/sources.md` |
 | Tile schema, `displayType` vocabulary, filter placement, `aggFn`, `quantile` levels | **Measured**, read off a live `save_dashboard` schema — but on **ClickStack 2.35.0-beta only**. Re-run `introspect-clickstack.py`; it exists for exactly this |
 | The `seriesLimit` trap, the `where`→`aggCondition` read-back mismatch, the `whereLanguage` default | **Measured**, each by isolating the one key that caused it |
 | Five end-to-end integrations (nginx, apache, postgresql, mysql, system) | **Measured** — 17 dashboards, logs *and* metrics for each, verified against the source's own numbers. mysql added the first **multi-line** log format (a line-oriented reader produces 5x the rows and no error); `system` added the widest shape yet — **10 data streams**, two of which derive `@timestamp` in *opposite* ways inside one integration |
