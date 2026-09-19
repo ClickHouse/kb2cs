@@ -232,7 +232,7 @@ there is a fifth thing to check first, because it changes what the tiles have to
 
 ```bash
 # does this deployment dashboard ECS as-is, and how does it treat a missing field?
-python3 verify/verify-ecs-source.py --yes            # 29 checks against its own fixture
+python3 verify/verify-ecs-source.py --yes            # 31 checks against its own fixture
 python3 verify/verify-ecs-source.py --yes --mutate   # 6 mutations, all must fire
 ```
 
@@ -368,7 +368,8 @@ not ready to move their agents ask first. Measured 2026-09-18 on ClickStack 2.35
 | Can ECS **metrics**? | **Yes**, also on a `log` source — a `metric` source rejects a wide document |
 | How faithfully? | **1,005 series** over 36,000 real Metricbeat documents matched Elasticsearch, across `line`, `stacked_bar`, `table`, `number`, `bar`, `pie`, `search` and `sql` tiles |
 | What breaks? | A multi-metricset table is mostly NULL, and a NULL aggregates as **zero**. `avg`, `min`, `last_value`, `count`, `quantile` silently wrong; `max`, `sum`, `count_distinct` correct; all of them render |
-| Asserted where? | `verify/verify-ecs-source.py` — **29 checks, 6 mutations**, against a generated fixture, so a future ClickStack that changes this turns it red |
+| Does that bite OTel too? | **Yes** — a missing Map key reads as `''`, which also casts to zero. `avg(LogAttributes['body_bytes_sent'])` on this repo's own OTel logs is 14% low unscoped. Nothing ECS about it |
+| Asserted where? | `verify/verify-ecs-source.py` — **31 checks, 6 mutations**, against a generated fixture, so a future ClickStack that changes this turns it red |
 
 This corrected a claim this repo previously made — that ECS metrics could not be kept at all.
 The [official agent-migration route](https://clickhouse.com/docs/use-cases/observability/clickstack/migration/elastic/migrating-agents)

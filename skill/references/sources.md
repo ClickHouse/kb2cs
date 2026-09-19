@@ -109,7 +109,7 @@ path the dashboards move to OTel names anyway. The answer below is what you can 
 
 **Measured on ClickStack 2.35.0, 2026-09-18**, against a deliberately hostile case: ECS as
 *flat typed columns*, no attribute `Map` anywhere, which is how ECS actually lands.
-`verify/verify-ecs-source.py` in this repo re-asserts all of it in 29 checks against a
+`verify/verify-ecs-source.py` in this repo re-asserts all of it in 31 checks against a
 generated fixture, so a future ClickStack that behaves differently turns it red rather than
 quietly invalidating this page.
 
@@ -212,6 +212,12 @@ Elastic's equivalent exactly.
 > | `quantile` | **wrong, and plausible** — it silently reports a lower percentile | the zeros occupy the low ranks |
 > | `max`, `sum` | correct | zero is their identity |
 > | `count_distinct` | correct | it is the one numeric aggregation NOT put through the cast |
+>
+> **This is not only an ECS problem.** The same coercion hits `avg(LogAttributes['x'])` on an
+> ordinary OTel logs source whenever some rows lack the key — ClickHouse returns `''` for a
+> missing Map key and `''` casts to zero just as a NULL does. Measured on this repo's own
+> reference data: 48,176 against a true 56,099, 14% low. What saves the migrated dashboards
+> here is the dataset predicate they already carry for an unrelated reason.
 >
 > **Every one of them renders `status=ok, hasData=true`.** The dilution factor is the number of
 > *rows* sharing the group, **not** the number of metricsets — a `system.network` metricset

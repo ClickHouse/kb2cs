@@ -70,15 +70,29 @@ numeric builder aggregation compiles to
 AVG(toFloat64OrDefault(toString(`system.cpu.total.norm.pct`)))
 ```
 
-and `toFloat64OrDefault` returns its default for anything it cannot parse — a NULL included.
-So a NULL becomes a **zero in the denominator**. That is invisible on the OTel metric tables,
-where `Value` is not Nullable, and ruinous the moment a source points at a table where a
-column is absent for most rows — which is every Beats-shaped table, because Beats writes one
-document per metricset.
+and `toFloat64OrDefault` returns its default for anything it cannot parse. So a **missing
+value becomes a zero in the denominator** — and "missing" is broader than it first looks:
+
+| the value is | and so | example |
+|---|---|---|
+| `NULL` in a Nullable column | `toString(NULL)` is NULL, which does not parse | a Beats-shaped table, where each metricset fills only its own columns |
+| a **missing Map key** | ClickHouse returns `''`, which does not parse | **any** tile doing `avg(LogAttributes['x'])` where some rows lack `x` |
+| a non-numeric string | does not parse | the Vector/VRL route, which flattens every field to a string |
+
+**The second row is not an ECS problem, and it is the one that will bite an OTel migration.**
+Measured on this repo's own reference logs: `avg(LogAttributes['body_bytes_sent'])` over
+`otel_logs` returns **48,176** where the answer is **56,099** — 14% low, because the key is on
+1,249,925 of 1,455,491 rows and the other 205,566 contributed a zero. Adding the predicate the
+panel should have carried returns exactly 56,099.
 
 `avg`, `min`, `last_value`, `count` and `quantile` go wrong; `max`, `sum` and `count_distinct`
-survive. All eight render. The full table, the two fixes, and a 29-check assertion of it are in
-`sources.md` and `verify/verify-ecs-source.py`.
+survive. All eight render. Note what already protects you: **carrying the source's dataset
+predicate onto every tile** — a rule this skill states for a completely different reason, that
+omitting it double-counts — also happens to fix this. The migrated dashboards here are correct
+because of a rule adopted to solve another problem.
+
+The full table, the two fixes, and a 31-check assertion of all of it are in `sources.md` and
+`verify/verify-ecs-source.py`.
 
 The transferable rule is not "beware NULL". It is: **compile one aggregation and read the SQL
 the target generated**, rather than assuming it generated the obvious thing. The error message

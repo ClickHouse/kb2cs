@@ -70,6 +70,11 @@ COLUMN_TYPES = {
     # the sanctioned path gets this column type, not Float64. One tick carries 'n/a' to stand
     # for the non-numeric values a real flattening produces.
     "probe.cpu.pct.str": "String",
+    # An OTel-shaped attribute map, because the coercion below is NOT an ECS problem. A
+    # migrated tile that averages `LogAttributes['x']` where some rows lack the key hits it
+    # just as hard: ClickHouse returns '' for a missing Map key, and '' casts to a counting
+    # zero exactly like a NULL does.
+    "attrs": "Map(LowCardinality(String), String)",
 }
 
 NOT_NUMERIC = "n/a"        # what tick 0 of the string column holds
@@ -130,7 +135,7 @@ def quantile(vals, q):
 
 
 def rows():
-    """Every fixture row as (timestamp, host, dataset, iface, cpu, mem, net, cpu-as-text)."""
+    """One row as (timestamp, host, dataset, iface, cpu, mem, net, cpu-as-text, attrs)."""
     out = []
     for h, host in enumerate(HOSTS):
         cpu, mem = cpu_values(h), mem_values(h)
@@ -139,12 +144,15 @@ def rows():
             # The offsets inside the tick are what make `last_value` deterministic: the newest
             # row for a host is always a network document, so an unscoped last_value on the
             # cpu column has to reach across metricsets and read the coerced zero.
+            # The map key rides on the cpu documents only -- the same sparsity as a real
+            # attribute that one dataset sets and another does not.
             out.append((base + 0, host, "probe.cpu", "", cpu[i], None, None,
-                        NOT_NUMERIC if i == 0 else repr(cpu[i])))
-            out.append((base + 10, host, "probe.mem", "", None, mem[i], None, ""))
+                        NOT_NUMERIC if i == 0 else repr(cpu[i]),
+                        "map('cpu_pct', '%s')" % cpu[i]))
+            out.append((base + 10, host, "probe.mem", "", None, mem[i], None, "", "map()"))
             for j, iface in enumerate(IFACES):
                 out.append((base + 20 + j, host, "probe.net", iface,
-                            None, None, net_value(h, i, j), ""))
+                            None, None, net_value(h, i, j), "", "map()"))
     return out
 
 
@@ -165,12 +173,12 @@ def build():
     conf.ch_statement("DROP VIEW IF EXISTS %s.%s" % (db, VIEW))
     conf.ch_statement(DDL.format(db=db, tbl=TABLE))
     vals = []
-    for off, host, ds, iface, cpu, mem, net, text in rows():
-        vals.append("(toDateTime64('%s', 3) + %d, '%s', '%s', '%s', %s, %s, %s, '%s')"
+    for off, host, ds, iface, cpu, mem, net, text, attrs in rows():
+        vals.append("(toDateTime64('%s', 3) + %d, '%s', '%s', '%s', %s, %s, %s, '%s', %s)"
                     % (BASE, off, host, ds, iface,
                        "NULL" if cpu is None else repr(cpu),
                        "NULL" if mem is None else repr(mem),
-                       "NULL" if net is None else repr(net), text))
+                       "NULL" if net is None else repr(net), text, attrs))
     conf.ch_statement("INSERT INTO %s.%s VALUES %s" % (db, TABLE, ",".join(vals)))
     conf.ch_statement(VIEW_DDL.format(db=db, tbl=TABLE, view=VIEW))
 
@@ -416,6 +424,20 @@ def run(quiet=False):
         per_host("the coercion is exactly avg(toFloat64OrDefault(toString(x)))",
                  by_host, [sum(cpu_values(h)) / (TICKS * ROWS_PER_TICK)
                            for h in range(len(HOSTS))], 1e-12)
+
+        # ------------------------------------------- the same trap on an OTel-shaped map
+        hdr("A missing MAP KEY, which is the OTel-shaped version of the same trap")
+        note("nothing ECS about this one -- it is what a migrated tile over "
+             "LogAttributes['x'] does when some rows lack the key")
+        attr = "attrs['cpu_pct']"
+        per_host("averaging a map attribute absent on some rows is diluted the same way",
+                 tbl(sparse, [{"aggFn": "avg", "valueExpression": attr, "alias": "v"}]),
+                 [sum(cpu_values(h)) / (TICKS * dilution()) for h in range(len(HOSTS))],
+                 1e-9)
+        per_host("and the same predicate restores it",
+                 tbl(sparse, [{"aggFn": "avg", "valueExpression": attr, "alias": "v"}],
+                     scope("probe.cpu")),
+                 [sum(cpu_values(h)) / TICKS for h in range(len(HOSTS))], 1e-9)
 
         # ------------------------------------------- the string-typed case Vector produces
         hdr("The same metric as a STRING column, which is what the Vector/VRL route lands")
