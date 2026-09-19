@@ -1,0 +1,300 @@
+{
+  "index_patterns": [
+    "nginx-training-*"
+  ],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "30s",
+      "index.codec": "best_compression",
+      "index.default_pipeline": null,
+      "index.mapping.total_fields.limit": 2000
+    },
+    "mappings": {
+      "_source": {
+        "enabled": true
+      },
+      "dynamic": "true",
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "service": {
+          "properties": {
+            "name": {
+              "type": "keyword"
+            }
+          }
+        },
+        "log": {
+          "properties": {
+            "stream": {
+              "type": "keyword"
+            },
+            "level": {
+              "type": "keyword"
+            },
+            "file": {
+              "properties": {
+                "path": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        },
+        "process": {
+          "properties": {
+            "pid": {
+              "type": "long"
+            },
+            "thread": {
+              "properties": {
+                "id": {
+                  "type": "long"
+                }
+              }
+            }
+          }
+        },
+        "user": {
+          "properties": {
+            "name": {
+              "type": "keyword"
+            }
+          }
+        },
+        "tags": {
+          "type": "keyword"
+        },
+        "event": {
+          "properties": {
+            "dataset": {
+              "type": "keyword"
+            },
+            "outcome": {
+              "type": "keyword"
+            },
+            "category": {
+              "type": "keyword"
+            }
+          }
+        },
+        "source": {
+          "properties": {
+            "address": {
+              "type": "keyword"
+            },
+            "ip": {
+              "type": "ip"
+            }
+          }
+        },
+        "http": {
+          "properties": {
+            "version": {
+              "type": "keyword"
+            },
+            "request": {
+              "properties": {
+                "method": {
+                  "type": "keyword"
+                },
+                "referrer": {
+                  "type": "keyword",
+                  "ignore_above": 1024
+                }
+              }
+            },
+            "response": {
+              "properties": {
+                "status_code": {
+                  "type": "long"
+                },
+                "bytes": {
+                  "type": "long"
+                },
+                "body": {
+                  "properties": {
+                    "bytes": {
+                      "type": "long"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "url": {
+          "properties": {
+            "original": {
+              "type": "keyword",
+              "ignore_above": 2048
+            },
+            "path": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "query": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "domain": {
+              "type": "keyword"
+            }
+          }
+        },
+        "user_agent": {
+          "properties": {
+            "original": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "name": {
+              "type": "keyword"
+            },
+            "version": {
+              "type": "keyword"
+            },
+            "device": {
+              "properties": {
+                "name": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "os": {
+              "properties": {
+                "name": {
+                  "type": "keyword"
+                },
+                "version": {
+                  "type": "keyword"
+                },
+                "full": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        },
+        "nginx": {
+          "properties": {
+            "hostname": {
+              "type": "keyword"
+            },
+            "remote_addr": {
+              "type": "keyword"
+            },
+            "http_x_forwarded_for": {
+              "type": "keyword"
+            },
+            "request_method": {
+              "type": "keyword"
+            },
+            "request_uri": {
+              "type": "keyword",
+              "ignore_above": 2048
+            },
+            "server_protocol": {
+              "type": "keyword"
+            },
+            "scheme": {
+              "type": "keyword"
+            },
+            "host": {
+              "type": "keyword"
+            },
+            "server_name": {
+              "type": "keyword"
+            },
+            "status": {
+              "type": "long"
+            },
+            "body_bytes_sent": {
+              "type": "long"
+            },
+            "bytes_sent": {
+              "type": "long"
+            },
+            "request_length": {
+              "type": "long"
+            },
+            "request_time": {
+              "type": "float"
+            },
+            "upstream_addr": {
+              "type": "keyword"
+            },
+            "upstream_status": {
+              "type": "keyword"
+            },
+            "upstream_response_time": {
+              "type": "keyword"
+            },
+            "upstream_connect_time": {
+              "type": "keyword"
+            },
+            "upstream_header_time": {
+              "type": "keyword"
+            },
+            "http_referer": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "http_user_agent": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "request_id": {
+              "type": "keyword"
+            },
+            "ssl_protocol": {
+              "type": "keyword"
+            },
+            "ssl_cipher": {
+              "type": "keyword"
+            },
+            "gzip_ratio": {
+              "type": "keyword"
+            },
+            "connection": {
+              "type": "long"
+            },
+            "connection_requests": {
+              "type": "integer"
+            },
+            "msec": {
+              "type": "keyword",
+              "index": false
+            },
+            "error": {
+              "properties": {
+                "cause": {
+                  "type": "keyword"
+                },
+                "connection": {
+                  "type": "long"
+                },
+                "upstream": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        },
+        "message": {
+          "type": "text",
+          "norms": false
+        }
+      }
+    }
+  },
+  "_meta": {
+    "description": "nginx observability training dataset -- Elasticsearch side of the ClickStack migration exercise",
+    "note": "upstream_* are keyword, not float: nginx writes '-' when it served locally and '0.01, 0.02' when it retried a second upstream. Handling that is one of the migration exercises.",
+    "nginx_field_note": "the JSON stream, mapped as-is. Compare the storage cost of these against the equivalent ClickHouse columns."
+  }
+}

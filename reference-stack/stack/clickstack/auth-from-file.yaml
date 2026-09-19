@@ -1,0 +1,12 @@
+# Overlay merged on top of ../../ingest/clickstack/otel-collector-nginx.yaml.
+#
+# The shipped config takes the ingestion key from ${env:CLICKSTACK_API_KEY}, which suits the
+# hand-run case. Inside this stack the key is generated at runtime by the `setup` service,
+# and the collector image is distroless -- no shell to export a variable with. So we override
+# just this one value with the collector's file provider, which reads the secret directly.
+#
+# Passed as a second --config; later files win on conflicting keys.
+exporters:
+  otlphttp/clickstack:
+    headers:
+      authorization: ${file:/secrets/api-key}

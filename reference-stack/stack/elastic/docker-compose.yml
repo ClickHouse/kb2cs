@@ -1,0 +1,140 @@
+# Elasticsearch + Kibana with the Fleet nginx integration installed, for testing the
+# prebuilt nginx dashboards against this dataset.
+#
+#   cd stack/elastic
+#   docker compose up -d              # es + kibana + install the nginx integration
+#   docker compose run --rm load      # backfill the dataset into the integration's streams
+#
+#   Kibana         http://localhost:5601      elastic / changeme
+#   Elasticsearch  http://localhost:9200      elastic / changeme
+#
+# Security is ENABLED and this is not optional: Fleet refuses to initialise without it
+# ("Kibana security must be enabled to use Fleet"), and Fleet is what installs the
+# integration's pipelines and dashboards. TLS is off, which is the part that is safe to skip
+# on a disposable localhost stack.
+#
+# NOTE: a different ingest path from ../../ingest/elasticsearch/. That one builds custom
+# nginx-training-* indices to compare hand-rolled parsing against ClickStack. This one feeds
+# the integration's own logs-nginx.access-* / logs-nginx.error-* data streams, because that
+# is the only thing the shipped dashboards read.
+
+name: nginx-training-elastic
+
+x-env: &creds
+  ELASTIC_PASSWORD: changeme
+  KIBANA_PASSWORD: changeme-kibana
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: nginx-training-es
+    environment:
+      <<: *creds
+      node.name: es01
+      discovery.type: single-node
+      xpack.license.self_generated.type: basic
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+      # 2g handles 500k docs comfortably; raise if you enlarge the dataset
+      ES_JAVA_OPTS: -Xms2g -Xmx2g
+      # lets you clean up with DELETE /logs-nginx.access-*
+      action.destructive_requires_name: "false"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:changeme http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+
+  # Kibana cannot start until kibana_system has a password, and only the elastic superuser
+  # can set it -- hence this one-shot service between the two.
+  es-init:
+    image: curlimages/curl:8.10.1
+    container_name: nginx-training-es-init
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+    environment: *creds
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        echo "[es-init] setting the kibana_system password"
+        until curl -sf -u "elastic:$$ELASTIC_PASSWORD" \
+          -X POST http://elasticsearch:9200/_security/user/kibana_system/_password \
+          -H 'Content-Type: application/json' \
+          -d "{\"password\":\"$$KIBANA_PASSWORD\"}" >/dev/null; do
+            echo "[es-init] retrying..."; sleep 3
+        done
+        echo "[es-init] done"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: nginx-training-kibana
+    depends_on:
+      es-init: { condition: service_completed_successfully }
+    environment:
+      SERVER_NAME: kibana
+      SERVER_HOST: 0.0.0.0
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: changeme-kibana
+      # Fleet stores package assets in encrypted saved objects; without these keys Kibana
+      # generates new ones on every restart and the install is lost.
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: fbb52b1a17ee4e3c88a4ca2f6b5b0d6e
+      XPACK_SECURITY_ENCRYPTIONKEY: a1d0c6e83f027327d8461063f4ac58a6
+      XPACK_REPORTING_ENCRYPTIONKEY: c6e83f027327d8461063f4ac58a6a1d0
+      NODE_OPTIONS: --max-old-space-size=1024
+    ports:
+      - "5601:5601"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status | grep -q '\"level\":\"available\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 90
+
+  # Initialises Fleet and installs the nginx integration: index templates, ingest pipelines
+  # and dashboards. Runs once and exits. Pulls from epr.elastic.co, so it needs outbound
+  # network -- see the README for the air-gapped alternative.
+  setup:
+    image: curlimages/curl:8.10.1
+    container_name: nginx-training-setup
+    depends_on:
+      kibana: { condition: service_healthy }
+    environment:
+      <<: *creds
+      KIBANA: http://kibana:5601
+    volumes:
+      - ./setup.sh:/setup.sh:ro
+    entrypoint: ["sh", "/setup.sh"]
+
+  # One-shot backfill. Not started by `up`; run it explicitly:
+  #   docker compose run --rm load
+  #   docker compose run --rm load python /load.py --whole-days
+  #   docker compose run --rm load python /load.py --no-shift
+  load:
+    image: python:3.12-slim
+    container_name: nginx-training-load
+    profiles: ["manual"]
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+    environment:
+      <<: *creds
+      ES: http://elasticsearch:9200
+    volumes:
+      - ../../data:/data:ro
+      - ./load-to-datastream.py:/load.py:ro
+      # The metrics loader rides along in the same service; run it explicitly:
+      #   docker compose run --rm load python /load-metrics.py
+      - ./load-metrics.py:/load-metrics.py:ro
+    command: ["python", "/load.py"]
+
+volumes:
+  esdata:

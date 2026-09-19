@@ -1,0 +1,120 @@
+{
+  "description": "Parse nginx combined access logs (data/access.log) into ECS. The 'before' side of the migration: note how much of the work is grok, and how much of the enrichment (user_agent, geoip) is pipeline-time and therefore fixed at index time.",
+  "processors": [
+    {
+      "grok": {
+        "description": "The URI is matched with DATA (non-greedy), anchored on ' HTTP/', NOT with NOTSPACE. 300 requests in this dataset have a space inside the URI (scanners sending `/product?id=1\\x22 OR \\x221\\x22=\\x221` across five HTTP methods), and NOTSPACE fails on every one of them.",
+        "field": "message",
+        "patterns": [
+          "%{IPORHOST:source.address} %{NOTSPACE:_tmp.ident} %{NOTSPACE:_tmp.remote_user} \\[%{HTTPDATE:_tmp.timestamp}\\] \"%{WORD:http.request.method} %{DATA:_tmp.uri_raw} HTTP/%{NUMBER:http.version}\" %{NUMBER:http.response.status_code:long} %{NUMBER:http.response.body.bytes:long} \"%{DATA:http.request.referrer}\" \"%{DATA:user_agent.original}\""
+        ],
+        "ignore_missing": false
+      }
+    },
+    {
+      "date": {
+        "description": "The combined format has second resolution only. Anything needing sub-second ordering must use access.json.log and its $msec field instead.",
+        "field": "_tmp.timestamp",
+        "target_field": "@timestamp",
+        "formats": ["dd/MMM/yyyy:HH:mm:ss Z"],
+        "timezone": "UTC"
+      }
+    },
+    {
+      "set": {
+        "description": "url.original verbatim, escapes and all",
+        "field": "url.original",
+        "copy_from": "_tmp.uri_raw"
+      }
+    },
+    {
+      "script": {
+        "description": "Split path from query by hand. The uri_parts processor expects an absolute URI and does not reliably handle a bare request target containing unencoded spaces, which is exactly what the scanner traffic here sends.",
+        "lang": "painless",
+        "source": "String u = ctx._tmp.uri_raw; int q = u.indexOf('?'); if (q < 0) { ctx.url.path = u; } else { ctx.url.path = u.substring(0, q); ctx.url.query = u.substring(q + 1); }"
+      }
+    },
+    {
+      "user_agent": {
+        "field": "user_agent.original",
+        "target_field": "user_agent",
+        "ignore_missing": true
+      }
+    },
+    {
+      "set": { "field": "event.dataset", "value": "nginx.access" }
+    },
+    {
+      "set": { "field": "event.category", "value": ["web"] }
+    },
+    {
+      "set": { "field": "event.kind", "value": "event" }
+    },
+    {
+      "set": { "field": "service.name", "value": "nginx" }
+    },
+    {
+      "set": {
+        "field": "event.outcome",
+        "value": "failure",
+        "if": "ctx.http?.response?.status_code != null && ctx.http.response.status_code >= 500"
+      }
+    },
+    {
+      "set": {
+        "field": "event.outcome",
+        "value": "unknown",
+        "if": "ctx.http?.response?.status_code != null && ctx.http.response.status_code >= 400 && ctx.http.response.status_code < 500"
+      }
+    },
+    {
+      "set": {
+        "field": "event.outcome",
+        "value": "success",
+        "if": "ctx.http?.response?.status_code != null && ctx.http.response.status_code < 400"
+      }
+    },
+    {
+      "set": {
+        "description": "ECS wants total response bytes; the combined format only gives us the body",
+        "field": "http.response.bytes",
+        "copy_from": "http.response.body.bytes",
+        "ignore_empty_value": true
+      }
+    },
+    {
+      "set": {
+        "description": "remote_user is '-' throughout this dataset (no HTTP basic auth); only set user.name when there is a real value",
+        "field": "user.name",
+        "copy_from": "_tmp.remote_user",
+        "if": "ctx._tmp?.remote_user != null && ctx._tmp.remote_user != '-'"
+      }
+    },
+    {
+      "remove": {
+        "description": "nginx writes '-' for an absent referrer; drop the field rather than indexing a sentinel value that would show up in aggregations",
+        "field": "http.request.referrer",
+        "if": "ctx.http?.request?.referrer == '-'",
+        "ignore_missing": true
+      }
+    },
+    {
+      "remove": {
+        "description": "geoip is deliberately absent: the client IPs are synthetic, so a real GeoLite2 lookup returns whatever those ranges happen to map to. Add a geoip processor here if you want to compare against a ClickHouse dictionary, but do not read meaning into the answers.",
+        "field": ["_tmp"],
+        "ignore_missing": true
+      }
+    }
+  ],
+  "on_failure": [
+    {
+      "set": { "field": "event.kind", "value": "pipeline_error" }
+    },
+    {
+      "append": { "field": "error.message", "value": "{{ _ingest.on_failure_message }}" }
+    },
+    {
+      "append": { "field": "tags", "value": "_parse_failure" }
+    }
+  ]
+}

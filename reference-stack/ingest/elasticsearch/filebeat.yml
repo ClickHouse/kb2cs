@@ -1,0 +1,129 @@
+# Filebeat config for the "before" side of the migration. Pair this with
+# ingest-pipeline-combined.json and index-template.json.
+#
+#   docker run --rm --network host \
+#     -v "$PWD/data:/data:ro" \
+#     -v "$PWD/ingest/elasticsearch/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro" \
+#     docker.elastic.co/beats/filebeat:8.15.0 -e --strict.perms=false
+#
+# Load the pipeline and template first:
+#   curl -XPUT localhost:9200/_ingest/pipeline/nginx-combined \
+#     -H 'Content-Type: application/json' -d @ingest/elasticsearch/ingest-pipeline-combined.json
+#   curl -XPUT localhost:9200/_index_template/nginx-training \
+#     -H 'Content-Type: application/json' -d @ingest/elasticsearch/index-template.json
+
+filebeat.inputs:
+  # --- raw combined: parsed server-side by the ingest pipeline (grok) -----------------
+  - type: filestream
+    id: nginx-access-combined
+    enabled: true
+    paths:
+      - /data/access.log
+    fields_under_root: true
+    fields:
+      service.name: nginx
+      log.stream: access_combined
+      event.dataset: nginx.access
+
+  # --- JSON: parsed client-side by Filebeat, no grok needed --------------------------
+  - type: filestream
+    id: nginx-access-json
+    enabled: true
+    paths:
+      - /data/access.json.log
+    parsers:
+      - ndjson:
+          target: nginx
+          add_error_key: true
+          overwrite_keys: false
+    fields_under_root: true
+    fields:
+      service.name: nginx
+      log.stream: access_json
+      event.dataset: nginx.access
+
+  # --- error log ---------------------------------------------------------------------
+  - type: filestream
+    id: nginx-error
+    enabled: true
+    paths:
+      - /data/error.log
+    fields_under_root: true
+    fields:
+      service.name: nginx
+      log.stream: error
+      event.dataset: nginx.error
+
+# The JSON stream carries its own timestamp in nginx.msec: epoch SECONDS with a fractional
+# millisecond part ("1786924820.070").
+#
+# Use layout UNIX, not UNIX_MS. Getting this wrong is silent, not loud: UNIX_MS reads
+# 1786924820.070 as milliseconds since the epoch, yields 1970-01-21, and every document
+# still indexes successfully -- just into the wrong day, under an index named
+# `nginx-training-1970.01.21`. Nothing errors. You find out from the index list.
+processors:
+  # NOTE: `add_host_metadata` is deliberately NOT enabled here.
+  #
+  # It stamps the shipper host's own hostname, IP list and MAC list onto every event. Measured
+  # on this dataset, like for like (same template, both force-merged to one segment), the JSON
+  # access index goes from 147.1 MiB without it to 221.7 MiB with it: +74.6 MiB, a 51%
+  # increase, for the Docker host's own identity repeated 499,964 times. 56.8 MiB of that is
+  # the indexed host.* fields (host.mac alone is 29.3 MiB, and host.ip picks up a redundant
+  # .keyword multifield from dynamic mapping); the rest is their copy inside _source.
+  #
+  # None of it says anything about the nginx traffic, and the ClickHouse tables carry no
+  # equivalent, so leaving it on would have quietly skewed the storage comparison in
+  # exercise 4.1 in ClickHouse's favour.
+  #
+  # The field that actually identifies where a request was served is nginx.hostname
+  # (web-edge-01..03), which is already in the log.
+  - timestamp:
+      field: nginx.msec
+      layouts:
+        - UNIX
+      test:
+        - "1786924820.070"
+      ignore_missing: true
+      ignore_failure: true
+  - drop_fields:
+      fields: ["agent.ephemeral_id", "ecs.version", "input.type"]
+      ignore_missing: true
+
+output.elasticsearch:
+  hosts: ["http://localhost:9200"]
+  # username: elastic
+  # password: changeme
+
+  # One index per stream, and NO date suffix. Two reasons:
+  #
+  #  1. A date suffix like `nginx-training-%{+yyyy.MM.dd}` is resolved by Filebeat from the
+  #     event's @timestamp *before* the event reaches Elasticsearch. The combined and error
+  #     streams get their @timestamp from a `date` processor in the server-side ingest
+  #     pipeline, which has not run yet -- so they land under today's date rather than the
+  #     2026-08-17 the log is actually about.
+  #  2. Separate indices per stream make the storage comparison against ClickHouse's
+  #     nginx_access / nginx_access_combined / nginx_error tables an apples-to-apples one.
+  indices:
+    - index: "nginx-training-access-json"
+      when.equals:
+        log.stream: "access_json"
+    - index: "nginx-training-access-combined"
+      when.equals:
+        log.stream: "access_combined"
+    - index: "nginx-training-error"
+      when.equals:
+        log.stream: "error"
+
+  # only the combined and error streams need grok; the JSON stream is already structured
+  pipelines:
+    - pipeline: "nginx-combined"
+      when.equals:
+        log.stream: "access_combined"
+    - pipeline: "nginx-error"
+      when.equals:
+        log.stream: "error"
+
+setup.template.enabled: false
+setup.ilm.enabled: false
+
+logging.level: info

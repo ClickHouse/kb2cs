@@ -1,0 +1,181 @@
+# OpenTelemetry Collector config that ships the APACHE dataset into ClickStack.
+#
+# A sibling of otel-collector-nginx.yaml, kept as a separate config and a separate collector
+# run rather than extra receivers on that one. Two reasons, both structural:
+#
+#   * ClickStack keys its Sources on `service.name`, which the `resource` processor sets for
+#     a whole pipeline. nginx and apache need different values, so they need different
+#     pipelines -- and a second config is clearer than a conditional transform on resource.
+#   * nginx's three files are already ingested. A config that only mentions apache's two
+#     cannot re-read them, which removes the duplicate-on-reload risk entirely.
+#
+# IMPORTANT -- apache is loaded into a NON-EMPTY otel_logs, on purpose: it is a second
+# service alongside nginx, not a replacement. `load.sh` refuses that, which is why apache has
+# its own `load-apache.sh` with a narrower guard (it counts apache rows, not all rows).
+#
+# Attribute naming: this config deliberately emits `remote_addr` and `http_user_agent` --
+# nginx's names, not apache's -- because the geo_* and ua_* MATERIALIZED columns on otel_logs
+# are defined in terms of those two keys. Normalising here means one enrichment mechanism
+# serves both services. Renaming them to apache's own vocabulary would mean a second geoip
+# dictionary and a second set of columns for no gain.
+
+extensions:
+  # Separate checkpoint directory from the nginx collector's, so neither can resume at the
+  # other's offsets. Same reasoning as the nginx config: /storage must be a writable mount,
+  # because the contrib image runs as uid 10001 with a read-only root.
+  file_storage/checkpoints:
+    directory: /storage
+
+receivers:
+  # --- apache 'combined' -------------------------------------------------------------
+  # Identical in shape to nginx's combined format with ONE difference that matters: %b
+  # logs a literal `-` for a 304, where nginx's $body_bytes_sent logs 0. Hence `\d+|-`.
+  filelog/apache_access:
+    include: [/data/apache/access.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      - type: regex_parser
+        regex: '^(?P<remote_addr>\S+) (?P<ident>\S+) (?P<remote_user>\S+) \[(?P<time_local>[^\]]+)\] "(?P<request_method>\S+) (?P<request_uri>[^"]*?) (?P<server_protocol>HTTP/[\d.]+)" (?P<status>\d{3}) (?P<body_bytes_sent>\d+|-) "(?P<http_referer>[^"]*)" "(?P<http_user_agent>[^"]*)"$'
+        timestamp:
+          parse_from: attributes.time_local
+          layout: '%d/%b/%Y:%H:%M:%S %z'
+        severity:
+          parse_from: attributes.status
+          overwrite_text: true
+          mapping:
+            error:
+              - min: 500
+                max: 599
+            warn:
+              - min: 400
+                max: 499
+            info:
+              - min: 100
+                max: 399
+      # `ident` is always "-" in this corpus and carries no information; drop it rather
+      # than shipping a column of dashes.
+      - type: remove
+        field: attributes.ident
+
+  # --- apache 2.4 error log ----------------------------------------------------------
+  # This is where apache.error.module and log.level come from, and it is the reason the
+  # apache dataset had to be generated rather than derived from the nginx logs: nginx's
+  # error format has no module field at all.
+  filelog/apache_error:
+    include: [/data/apache/error.log]
+    start_at: beginning
+    storage: file_storage/checkpoints
+    include_file_path: true
+    operators:
+      - type: regex_parser
+        regex: '^\[(?P<ts>\w{3} \w{3} \d{1,2} \d{2}:\d{2}:\d{2}\.\d{6} \d{4})\] \[(?P<module>[^:\]]+):(?P<level>[^\]]+)\] \[pid (?P<pid>\d+):tid (?P<tid>\d+)\](?: \[client (?P<client>[^\]]+)\])? (?P<msg>.*)$'
+        timestamp:
+          parse_from: attributes.ts
+          # %f is microseconds. Apache's error timestamp carries no zone, so it is read as
+          # UTC -- which is what the generator emits.
+          layout: '%a %b %d %H:%M:%S.%f %Y'
+        severity:
+          parse_from: attributes.level
+          # Mirror the nginx error stream: SeverityText becomes INFO/WARN/ERROR, while the
+          # finer apache level (notice vs info) stays readable in attributes.level, which is
+          # what the migrated `log.level` tile actually groups on.
+          overwrite_text: true
+          mapping:
+            fatal: [emerg, alert]
+            error: [error, crit]
+            warn: warn
+            info: [info, notice]
+            debug: [debug, trace1, trace2]
+      # Split `[client 1.2.3.4:56789]` into address and port. The greedy `.*` before the
+      # final colon is deliberate: 4% of this corpus's clients are IPv6, whose address is
+      # itself full of colons, so anchoring on the LAST colon is the only split that works
+      # for both families.
+      - type: regex_parser
+        parse_from: attributes.client
+        regex: '^(?P<remote_addr>.*):(?P<remote_port>\d+)$'
+        if: 'attributes.client != nil'
+      # Apache records the docroot-absolute path of a missing file; lift it out so the
+      # error stream is filterable on path the way the access stream is.
+      - type: regex_parser
+        parse_from: attributes.msg
+        regex: 'File does not exist: (?P<file_path>\S+)'
+        if: 'attributes.msg matches "File does not exist: "'
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: apache
+        action: upsert
+      - key: deployment.environment
+        value: training
+        action: upsert
+
+  # Same two mutually exclusive statements as the nginx config; see that file for why.
+  # SHIFT_NS for apache comes from `SERVICE=apache ./shift-ns.sh --align-hour`, which
+  # anchors on APACHE's last event -- not nginx's. Both services therefore end together on
+  # the wall clock even though their raw logs end a few seconds apart.
+  transform/shift_time:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(log.time_unix_nano, log.time_unix_nano + ${env:SHIFT_NS:-0}) where ${env:SHIFT_NS:-0} != 0
+          - set(log.time_unix_nano, log.time_unix_nano + (UnixNano(Now()) - UnixNano(Time("2026-08-17T23:59:59Z", "%Y-%m-%dT%H:%M:%SZ")))) where ${env:SHIFT_NS:-0} == 0
+
+  transform/tag_stream:
+    log_statements:
+      - context: log
+        statements:
+          - set(log.attributes["log.stream"], "apache_access") where log.attributes["log.file.path"] == "/data/apache/access.log"
+          - set(log.attributes["log.stream"], "apache_error") where log.attributes["log.file.path"] == "/data/apache/error.log"
+          # status is a string out of the regex; make it numeric so range filters and
+          # aggregations behave the same as on the nginx streams
+          - set(log.attributes["status"], Int(log.attributes["status"])) where log.attributes["status"] != nil
+          # `-` means apache sent no body (304/204). Elasticsearch's grok drops the field
+          # entirely in that case, so a SUM over it ignores those rows; storing 0 here makes
+          # the two platforms' byte totals agree instead of differing by the 304 count.
+          - set(log.attributes["body_bytes_sent"], "0") where log.attributes["body_bytes_sent"] == "-"
+          - set(log.attributes["body_bytes_sent"], Int(log.attributes["body_bytes_sent"])) where log.attributes["body_bytes_sent"] != nil
+
+  # See otel-collector-nginx.yaml: batch size is the blast radius for a duplicated batch,
+  # because OTLP delivery is at-least-once and otel_logs has no dedup. Keep it small.
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  otlphttp/clickstack:
+    endpoint: http://localhost:4318
+    headers:
+      authorization: ${env:CLICKSTACK_API_KEY}
+    compression: gzip
+    timeout: 120s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+      num_consumers: 1
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 0
+
+service:
+  extensions: [file_storage/checkpoints]
+  pipelines:
+    logs:
+      receivers: [filelog/apache_access, filelog/apache_error]
+      processors: [memory_limiter, resource, transform/shift_time, transform/tag_stream, batch]
+      exporters: [otlphttp/clickstack]
+  telemetry:
+    logs:
+      level: info
